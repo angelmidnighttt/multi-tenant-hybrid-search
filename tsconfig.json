@@ -1,0 +1,19 @@
+{
+  // Used for type checking only (npm run typecheck). Node runs .ts files directly
+  // by stripping types, so only "erasable" syntax is allowed:
+  // no enums, no namespaces, no parameter properties.
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}
