@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Config } from './config.ts';
+import type { Config } from '../config.ts';
 import { isUuid } from './uuid.ts';
 
 /**

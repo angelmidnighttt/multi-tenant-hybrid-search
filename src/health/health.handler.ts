@@ -1,5 +1,5 @@
-import type { Db } from './db.ts';
-import type { Handler } from './http.ts';
+import type { Db } from '../lib/db.ts';
+import type { Handler } from '../lib/http.ts';
 
 export function healthHandler(db: Db): Handler {
   return async () => {

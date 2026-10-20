@@ -1,8 +1,8 @@
 import type { AddressInfo } from 'node:net';
 import { SignJWT } from 'jose';
-import { createAuth } from '../../src/auth.ts';
-import { createDb } from '../../src/db.ts';
-import { createHttpServer } from '../../src/http.ts';
+import { createAuth } from '../../src/auth/auth.ts';
+import { createDb } from '../../src/lib/db.ts';
+import { createHttpServer } from '../../src/lib/http.ts';
 import { buildRoutes } from '../../src/routes.ts';
 import { TEST_AUTH, testConfig } from './db.ts';
 

@@ -5,7 +5,7 @@
 import { parseArgs } from 'node:util';
 import { SignJWT } from 'jose';
 import { loadAuthConfig } from '../src/config.ts';
-import { isUuid } from '../src/uuid.ts';
+import { isUuid } from '../src/lib/uuid.ts';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,

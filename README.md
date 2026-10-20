@@ -9,8 +9,9 @@ one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
 TypeScript executed directly by Node, without a build step.
 
 > **Status: work in progress.** The database schema, tenant isolation, the
-> Node.js foundation, and JWT authentication are done and tested. Ingestion,
-> BM25, vector, and hybrid search are next (see [Roadmap](#roadmap)).
+> Node.js foundation, JWT authentication, and document ingestion are done and
+> tested. Embeddings, BM25, vector, and hybrid search are next (see
+> [Roadmap](#roadmap)).
 
 ## Why this design
 
@@ -100,6 +101,46 @@ unsigned (`alg: none`), signed with another algorithm, tampered with, or with a
 wrong issuer or audience. A valid token whose tenant no longer exists gets a
 `403`.
 
+### Add a document
+
+```bash
+cat > document.json <<'EOF'
+{
+  "external_id": "tuition-policy-2026",
+  "title": "Quy chế học phí 2026",
+  "content": "Điều 1. Sinh viên đạt loại giỏi được xét miễn học phí.\n\nĐiều 2. Hồ sơ nộp tại phòng đào tạo.",
+  "source_uri": "https://example.com/tuition-policy",
+  "metadata": { "year": 2026 }
+}
+EOF
+
+curl -X POST http://localhost:3000/documents \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @document.json
+# 202 {"id":"1","external_id":"tuition-policy-2026","replaced":false,"chunk_count":1,"embedding_status":"pending"}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `title` | yes | Up to 500 characters |
+| `content` | yes | Plain text. Paragraphs are separated by blank lines. |
+| `external_id` | no | Your own id, up to 200 characters. Sending an existing `external_id` again **replaces** that document and its chunks (`"replaced": true`, same `id`), so re-ingesting is idempotent. Ids are scoped per tenant. |
+| `source_uri` | no | Up to 2000 characters |
+| `metadata` | no | Any JSON object |
+
+Any other field is rejected with `400`. In particular, `tenant_id` cannot be
+sent: the tenant always comes from the token.
+
+The content is split into chunks of at most **250 words** that never end
+mid-sentence. Each chunk repeats up to **40 words** from the end of the previous
+chunk, so a passage that spans a boundary is still found. Chunks are searchable
+by keyword immediately. The response is `202` because embeddings are computed
+afterwards (`embedding_status: "pending"`).
+
+> **Windows tip:** send non-ASCII text from a file (`--data-binary @file.json`)
+> rather than inline (`-d '...'`). Command-line arguments can be re-encoded by
+> the console code page, which turns Vietnamese characters into `?`.
+
 ### See the isolation yourself
 
 ```bash
@@ -146,9 +187,11 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 
 | File | What it proves |
 |---|---|
-| `test/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or write BM25 stats. Vietnamese unaccented search works. |
-| `test/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
-| `test/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
+| `test/database/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or write BM25 stats. Vietnamese unaccented search works. |
+| `test/documents/chunker.test.ts` | Chunking (no database): never exceeds the size limit, never cuts a sentence, covers all text in order, overlaps consecutive chunks, keeps paragraph breaks, and normalizes NFD to NFC. |
+| `test/documents/documents.test.ts` | `POST /documents`. Documents and chunks are stored under the token's tenant. Re-sending an `external_id` replaces the document. The same `external_id` in two tenants gives two separate documents. A `tenant_id` in the body is rejected. Invalid bodies write nothing. |
+| `test/auth/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
+| `test/lib/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
 
 CI runs type checking and the full suite on Node 22 and 24 for every push and
 pull request.
@@ -162,26 +205,43 @@ db/init/                 SQL run once when the database volume is created
   003_schema.sql         tables, Vietnamese full-text config, indexes
   004_rls.sql            RLS policies and grants
 src/
-  main.ts                entry point, graceful shutdown
-  config.ts              environment variable loading and validation
-  db.ts                  connection pool + withTenant()
-  auth.ts                JWT verification, protect() wrapper for routes
-  http.ts                minimal node:http server: routing, JSON body, errors
-  routes.ts              route table
-  health.ts              GET /health (public)
-  me.ts                  GET /me (authenticated)
-  uuid.ts                UUID validation
+  main.ts                       entry point: config → db → auth → HTTP server
+  config.ts                     environment variable loading and validation
+  routes.ts                     route table: which handler serves which path
+  lib/                          shared infrastructure, no business logic
+    db.ts                       connection pool + withTenant()
+    http.ts                     minimal node:http server: routing, JSON body, errors
+    uuid.ts                     UUID validation
+  auth/
+    auth.ts                     JWT verification, protect() wrapper for routes
+  health/
+    health.handler.ts           GET /health (public)
+  tenants/
+    tenants.service.ts          current tenant lookup (403 if it no longer exists)
+    me.handler.ts               GET /me
+  documents/
+    documents.handler.ts        POST /documents: HTTP in/out
+    documents.validation.ts     request body validation
+    documents.service.ts        upsert by external_id + chunk insert, in a tenant transaction
+    chunker.ts                  sentence-aware chunking with overlap
 scripts/
-  token.ts               dev helper: mint a JWT for a tenant
-test/
-  helpers/db.ts          starts a throwaway database and seeds tenants A and B
-  helpers/server.ts      starts the real app on a random port, signs test tokens
-  auth.test.ts           HTTP + JWT tests
-  rls.test.ts            database-level isolation tests
-  with-tenant.test.ts    withTenant() isolation tests
-.github/workflows/ci.yml type check + tests on Node 22 and 24
-docker-compose.yml       PostgreSQL 17 + pgvector 0.8.1
+  token.ts                      dev helper: mint a JWT for a tenant
+test/                           mirrors src/
+  helpers/db.ts                 starts a throwaway database and seeds tenants A and B
+  helpers/server.ts             starts the real app on a random port, signs test tokens
+  database/rls.test.ts          database-level isolation
+  lib/with-tenant.test.ts       withTenant() isolation
+  auth/auth.test.ts             HTTP + JWT
+  documents/chunker.test.ts     chunking (no database)
+  documents/documents.test.ts   ingestion
+.github/workflows/ci.yml        type check + tests on Node 22 and 24
+docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1
 ```
+
+Each feature lives in its own folder and follows the same split: a
+`*.handler.ts` turns HTTP into a function call, a `*.service.ts` holds the
+logic and SQL (always inside `db.withTenant()`), and a `*.validation.ts`
+checks input. `lib/` holds infrastructure that knows nothing about features.
 
 ### Data model
 
@@ -241,7 +301,8 @@ change them, run `npm run db:reset`.
 - [x] Node.js foundation: config, `withTenant()`, HTTP server, health check
 - [x] Automated isolation test suite (`node:test` + Testcontainers) and CI
 - [x] Authentication: tenant taken from a verified JWT claim (`GET /me`)
-- [ ] Ingestion: `POST /documents` → chunking → embeddings (Ollama `bge-m3`)
+- [x] Ingestion: `POST /documents`, sentence-aware chunking, idempotent re-ingest by `external_id`
+- [ ] Embeddings: background worker with Ollama `bge-m3`
 - [ ] BM25 search with per-tenant statistics
 - [ ] Vector search with good recall for small tenants
 - [ ] Hybrid search with Reciprocal Rank Fusion (RRF)

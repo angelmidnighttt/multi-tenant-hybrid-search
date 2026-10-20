@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
-import { startTestDatabase, TENANT_A, TENANT_B, withClient, type TestDatabase } from './helpers/db.ts';
+import { startTestDatabase, TENANT_A, TENANT_B, withClient, type TestDatabase } from '../helpers/db.ts';
 
 // PostgreSQL error codes
 const INSUFFICIENT_PRIVILEGE = '42501'; // RLS violation or missing grant

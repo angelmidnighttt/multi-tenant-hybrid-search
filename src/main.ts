@@ -1,7 +1,7 @@
-import { createAuth } from './auth.ts';
+import { createAuth } from './auth/auth.ts';
 import { loadConfig } from './config.ts';
-import { createDb } from './db.ts';
-import { createHttpServer } from './http.ts';
+import { createDb } from './lib/db.ts';
+import { createHttpServer } from './lib/http.ts';
 import { buildRoutes } from './routes.ts';
 
 const config = loadConfig();

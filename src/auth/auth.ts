@@ -1,7 +1,7 @@
 import { errors, jwtVerify, type JWTPayload } from 'jose';
-import type { AuthConfig } from './config.ts';
-import { HttpError, type Handler, type HttpRequest, type HttpResponse } from './http.ts';
-import { isUuid } from './uuid.ts';
+import type { AuthConfig } from '../config.ts';
+import { HttpError, type Handler, type HttpRequest, type HttpResponse } from '../lib/http.ts';
+import { isUuid } from '../lib/uuid.ts';
 
 /** Who is calling. tenantId comes ONLY from a verified token, never from the request body or query. */
 export interface AuthContext {

@@ -1,8 +1,8 @@
 // Application-level isolation: the guarantees of createDb() / withTenant().
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { createDb, type Db, type TenantTx } from '../src/db.ts';
-import { startTestDatabase, TENANT_A, TENANT_B, testConfig, type TestDatabase } from './helpers/db.ts';
+import { createDb, type Db, type TenantTx } from '../../src/lib/db.ts';
+import { startTestDatabase, TENANT_A, TENANT_B, testConfig, type TestDatabase } from '../helpers/db.ts';
 
 let testDb: TestDatabase;
 

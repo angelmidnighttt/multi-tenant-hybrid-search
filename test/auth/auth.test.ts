@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { UnsecuredJWT } from 'jose';
-import { startTestDatabase, TENANT_A, TENANT_B, TEST_AUTH, type TestDatabase } from './helpers/db.ts';
-import { signToken, startTestServer, type TestServer } from './helpers/server.ts';
+import { startTestDatabase, TENANT_A, TENANT_B, TEST_AUTH, type TestDatabase } from '../helpers/db.ts';
+import { signToken, startTestServer, type TestServer } from '../helpers/server.ts';
 
 let testDb: TestDatabase;
 let server: TestServer;
