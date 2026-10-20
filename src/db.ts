@@ -1,5 +1,6 @@
 import pg from 'pg';
 import type { Config } from './config.ts';
+import { isUuid } from './uuid.ts';
 
 /**
  * A transaction bound to a tenant. Only exists inside withTenant(), and every
@@ -25,8 +26,6 @@ export interface Db {
   close(): Promise<void>;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export async function createDb(config: Config): Promise<Db> {
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
@@ -48,7 +47,7 @@ export async function createDb(config: Config): Promise<Db> {
 
   return {
     async withTenant(tenantId, fn) {
-      if (!UUID_RE.test(tenantId)) throw new Error('tenantId is not a valid UUID');
+      if (!isUuid(tenantId)) throw new Error('tenantId is not a valid UUID');
 
       const client = await pool.connect();
       // Block using tx after withTenant returns: by then the connection is back

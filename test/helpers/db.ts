@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import type { Config } from '../../src/config.ts';
+import type { AuthConfig, Config } from '../../src/config.ts';
 
 // Same image and init scripts as docker-compose.yml, so tests run against the
 // real schema, roles and policies.
@@ -62,6 +62,12 @@ export async function withClient<T>(url: string, fn: (client: pg.Client) => Prom
   }
 }
 
+export const TEST_AUTH: AuthConfig = {
+  jwtSecret: 'test-secret-that-is-at-least-32-characters-long',
+  jwtIssuer: 'hybrid-search',
+  jwtAudience: 'hybrid-search-api',
+};
+
 export function testConfig(databaseUrl: string, dbPoolMax = 5): Config {
-  return { port: 0, databaseUrl, dbPoolMax, dbStatementTimeoutMs: 5000 };
+  return { port: 0, databaseUrl, dbPoolMax, dbStatementTimeoutMs: 5000, auth: TEST_AUTH };
 }

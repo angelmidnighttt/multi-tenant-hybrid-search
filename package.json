@@ -12,10 +12,12 @@
     "dev": "node --watch --env-file-if-exists=app.env src/main.ts",
     "typecheck": "tsc",
     "test": "node --test \"test/**/*.test.ts\"",
+    "token": "node --env-file-if-exists=app.env scripts/token.ts",
     "db:up": "docker compose up -d --wait",
     "db:reset": "docker compose down -v && docker compose up -d --wait"
   },
   "dependencies": {
+    "jose": "^6.2.13",
     "pg": "^8.23.1"
   },
   "devDependencies": {

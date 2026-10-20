@@ -18,6 +18,7 @@ export interface HttpRequest {
 export interface HttpResponse {
   status: number;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 export type Handler = (req: HttpRequest) => Promise<HttpResponse>;
@@ -28,11 +29,13 @@ export type Routes = Record<string, Handler>;
 export class HttpError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly headers: Record<string, string> | undefined;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, headers?: Record<string, string>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.headers = headers;
   }
 }
 
@@ -89,7 +92,11 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 
 function toErrorResponse(err: unknown): HttpResponse {
   if (err instanceof HttpError) {
-    return { status: err.status, body: { error: { code: err.code, message: err.message } } };
+    return {
+      status: err.status,
+      body: { error: { code: err.code, message: err.message } },
+      ...(err.headers && { headers: err.headers }),
+    };
   }
   // Unexpected errors (including SQL errors) are only logged, never returned to
   // the client, because error messages may contain data.
@@ -97,9 +104,10 @@ function toErrorResponse(err: unknown): HttpResponse {
   return { status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
 }
 
-function send(res: ServerResponse, { status, body }: HttpResponse): void {
+function send(res: ServerResponse, { status, body, headers }: HttpResponse): void {
   const payload = body === undefined ? '' : JSON.stringify(body);
   res.writeHead(status, {
+    ...headers,
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
   });

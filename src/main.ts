@@ -1,3 +1,4 @@
+import { createAuth } from './auth.ts';
 import { loadConfig } from './config.ts';
 import { createDb } from './db.ts';
 import { createHttpServer } from './http.ts';
@@ -5,7 +6,8 @@ import { buildRoutes } from './routes.ts';
 
 const config = loadConfig();
 const db = await createDb(config);
-const server = createHttpServer(buildRoutes({ db }));
+const auth = createAuth(config.auth);
+const server = createHttpServer(buildRoutes({ db, auth }));
 
 server.listen(config.port, () => {
   console.log(`[http] listening on http://localhost:${config.port}`);

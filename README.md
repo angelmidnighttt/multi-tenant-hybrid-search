@@ -8,9 +8,9 @@ Multi-tenant search on PostgreSQL: **Row-Level Security** for tenant isolation,
 one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
 TypeScript executed directly by Node, without a build step.
 
-> **Status: work in progress.** The database schema, tenant isolation, and the
-> Node.js foundation are done and tested. Ingestion, BM25, vector, and hybrid
-> search are next (see [Roadmap](#roadmap)).
+> **Status: work in progress.** The database schema, tenant isolation, the
+> Node.js foundation, and JWT authentication are done and tested. Ingestion,
+> BM25, vector, and hybrid search are next (see [Roadmap](#roadmap)).
 
 ## Why this design
 
@@ -58,6 +58,8 @@ cp .env.example .env
 # 2. App config. The app gets its own file so it never sees the superuser password.
 cp app.env.example app.env
 #    -> put the same APP_DB_PASSWORD into DATABASE_URL
+#    -> set JWT_SECRET to a random value (the app refuses to start with the placeholder):
+#       node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 # 3. Install and run
 npm install
@@ -77,6 +79,26 @@ Creating tenants is an admin operation. It runs as the superuser, never as
 docker exec -it hybrid-search-db psql -U postgres -d hybrid_search -c \
   "INSERT INTO app.tenants (slug, name) VALUES ('acme', 'Acme Corp') RETURNING id;"
 ```
+
+### Call the API as that tenant
+
+Requests are authenticated with a JWT (HS256). The tenant is taken **only**
+from the token's `tenant_id` claim, never from the URL or the body. For local
+development, mint a token with the secret from `app.env`:
+
+```bash
+TOKEN=$(npm run -s token -- <tenant-id> --sub alice --ttl 1h)
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/me
+# {"subject":"alice","tenant":{"id":"<tenant-id>","slug":"acme","name":"Acme Corp"}}
+```
+
+In production, tokens come from your identity provider. They must be signed
+with HS256 using `JWT_SECRET`, and must carry `sub`, `tenant_id` (UUID), `exp`,
+and the configured `iss` and `aud`. Every other token gets a `401`: expired,
+unsigned (`alg: none`), signed with another algorithm, tampered with, or with a
+wrong issuer or audience. A valid token whose tenant no longer exists gets a
+`403`.
 
 ### See the isolation yourself
 
@@ -125,6 +147,7 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 | File | What it proves |
 |---|---|
 | `test/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or write BM25 stats. Vietnamese unaccented search works. |
+| `test/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
 | `test/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
 
 CI runs type checking and the full suite on Node 22 and 24 for every push and
@@ -142,11 +165,18 @@ src/
   main.ts                entry point, graceful shutdown
   config.ts              environment variable loading and validation
   db.ts                  connection pool + withTenant()
+  auth.ts                JWT verification, protect() wrapper for routes
   http.ts                minimal node:http server: routing, JSON body, errors
   routes.ts              route table
-  health.ts              GET /health
+  health.ts              GET /health (public)
+  me.ts                  GET /me (authenticated)
+  uuid.ts                UUID validation
+scripts/
+  token.ts               dev helper: mint a JWT for a tenant
 test/
   helpers/db.ts          starts a throwaway database and seeds tenants A and B
+  helpers/server.ts      starts the real app on a random port, signs test tokens
+  auth.test.ts           HTTP + JWT tests
   rls.test.ts            database-level isolation tests
   with-tenant.test.ts    withTenant() isolation tests
 .github/workflows/ci.yml type check + tests on Node 22 and 24
@@ -174,6 +204,7 @@ tokenization + diacritic removal), so `hoc sinh` matches `học sinh`.
 | `npm start` | Run the API |
 | `npm run typecheck` | Type-check with `tsc` (no output files) |
 | `npm test` | Run the test suite (requires Docker) |
+| `npm run -s token -- <tenant-id>` | Print a dev JWT for a tenant (`--sub`, `--ttl` optional) |
 | `npm run db:up` | Start the database and wait until it is healthy |
 | `npm run db:reset` | **Delete all data** and recreate the database from `db/init/` |
 
@@ -199,6 +230,9 @@ change them, run `npm run db:reset`.
 | `PORT` | `3000` | HTTP port |
 | `DB_POOL_MAX` | `10` | Maximum pool connections |
 | `DB_STATEMENT_TIMEOUT_MS` | `5000` | Per-statement timeout |
+| `JWT_SECRET` | (required) | HS256 secret, at least 32 characters |
+| `JWT_ISSUER` | `hybrid-search` | Required `iss` claim |
+| `JWT_AUDIENCE` | `hybrid-search-api` | Required `aud` claim |
 
 ## Roadmap
 
@@ -206,7 +240,7 @@ change them, run `npm run db:reset`.
 - [x] Docker setup (PostgreSQL 17 + pgvector)
 - [x] Node.js foundation: config, `withTenant()`, HTTP server, health check
 - [x] Automated isolation test suite (`node:test` + Testcontainers) and CI
-- [ ] Authentication: tenant taken from a verified JWT claim
+- [x] Authentication: tenant taken from a verified JWT claim (`GET /me`)
 - [ ] Ingestion: `POST /documents` → chunking → embeddings (Ollama `bge-m3`)
 - [ ] BM25 search with per-tenant statistics
 - [ ] Vector search with good recall for small tenants
