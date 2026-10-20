@@ -1,7 +1,7 @@
 import { HttpError } from '../lib/http.ts';
 
-// "hybrid" is added in the next step.
-const MODES = ['bm25', 'vector'] as const;
+// The first mode is the default.
+const MODES = ['hybrid', 'bm25', 'vector'] as const;
 export type SearchMode = (typeof MODES)[number];
 
 export interface SearchInput {
@@ -16,7 +16,7 @@ export function parseSearchInput(params: URLSearchParams): SearchInput {
   if (!query) throw invalidQuery('"q" is required');
   if (query.length > 500) throw invalidQuery('"q" must be at most 500 characters');
 
-  const mode = params.get('mode') ?? 'bm25';
+  const mode = params.get('mode') ?? MODES[0];
   if (!isMode(mode)) throw invalidQuery(`"mode" must be one of: ${MODES.join(', ')}`);
 
   const rawLimit = params.get('limit');

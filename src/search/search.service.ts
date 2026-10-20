@@ -1,7 +1,8 @@
 import { assertValidEmbeddings, type EmbeddingProvider } from '../embeddings/embedding.provider.ts';
-import type { Db } from '../lib/db.ts';
+import type { Db, TenantTx } from '../lib/db.ts';
 import { HttpError } from '../lib/http.ts';
 import { currentTenant } from '../tenants/tenants.service.ts';
+import { fuseRankings } from './rrf.ts';
 
 export interface SearchResult {
   chunkId: string;
@@ -11,32 +12,40 @@ export interface SearchResult {
   score: number;
 }
 
-interface ResultRow {
-  chunk_id: string;
-  document_id: string;
-  title: string;
-  content: string;
-  score: number;
+export interface HybridResult extends SearchResult {
+  /** 1-based rank in the BM25 list, or null if BM25 did not return the chunk. */
+  bm25Rank: number | null;
+  /** 1-based rank in the vector list, or null if vector search did not return it. */
+  vectorRank: number | null;
 }
+
+/** A ranking: chunk ids in order, best first, with each branch's own score. */
+type Ranking = { chunkId: string; score: number }[];
+
+// -----------------------------------------------------------------------------
+// BM25
+// -----------------------------------------------------------------------------
 
 /** Keyword search ranked by BM25, using the tenant's own statistics. */
 export async function searchBm25(db: Db, tenantId: string, query: string, limit: number): Promise<SearchResult[]> {
   return db.withTenant(tenantId, async (tx) => {
     await currentTenant(tx);
-
-    // app.bm25_search() runs without RLS (to use the GIN index) and returns ids
-    // and scores only. Titles and content are read here, through RLS, so even a
-    // bug in the function could not return another tenant's text.
-    const { rows } = await tx.query<ResultRow>(
-      `SELECT r.chunk_id, c.document_id, d.title, c.content, r.score
-         FROM app.bm25_search($1, $2) AS r
-         JOIN chunks AS c ON c.id = r.chunk_id
-         JOIN documents AS d ON d.id = c.document_id
-        ORDER BY r.score DESC, r.chunk_id`,
-      [query, limit],
-    );
-    return rows.map(toResult);
+    const ranking = await bm25Ranking(tx, query, limit);
+    return withContent(tx, ranking, (chunk, { score }) => ({ ...chunk, score }));
   });
+}
+
+/**
+ * app.bm25_search() runs without RLS (to use the GIN index) and returns ids and
+ * scores only. Content is always read afterwards through RLS (withContent), so
+ * even a bug in the function could not return another tenant's text.
+ */
+async function bm25Ranking(tx: TenantTx, query: string, limit: number): Promise<Ranking> {
+  const { rows } = await tx.query<{ chunk_id: string; score: number }>(
+    'SELECT chunk_id, score FROM app.bm25_search($1, $2)',
+    [query, limit],
+  );
+  return rows.map((row) => ({ chunkId: row.chunk_id, score: row.score }));
 }
 
 // -----------------------------------------------------------------------------
@@ -72,55 +81,135 @@ export async function searchVector(
   tenantId: string,
   query: string,
   limit: number,
-  { exactSearchMaxChunks = EXACT_SEARCH_MAX_CHUNKS }: VectorSearchOptions = {},
+  options: VectorSearchOptions = {},
 ): Promise<{ strategy: VectorStrategy; results: SearchResult[] }> {
   // The model call happens before the transaction, so no connection is held.
-  const vector = JSON.stringify(await embedQuery(embeddings, query));
+  const vector = await embedQuery(embeddings, query);
 
   return db.withTenant(tenantId, async (tx) => {
     await currentTenant(tx);
-
-    const { rows: counted } = await tx.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM chunks WHERE embedding IS NOT NULL',
-    );
-    const strategy: VectorStrategy = counted[0]!.n <= exactSearchMaxChunks ? 'exact' : 'hnsw';
-
-    let nearest: string;
-    if (strategy === 'exact') {
-      // MATERIALIZED keeps the planner away from the HNSW index: the tenant's
-      // chunks are fetched by tenant_id and every distance is computed.
-      nearest = `
-        candidates AS MATERIALIZED (
-          SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL
-        ),
-        nearest AS (
-          SELECT id, embedding <=> $1::vector AS distance
-            FROM candidates ORDER BY distance LIMIT $2
-        )`;
-    } else {
-      // Iterative scans keep walking the HNSW graph until enough rows pass the
-      // RLS filter. relaxed_order may return them slightly out of order, so the
-      // final query sorts again.
-      await tx.query("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)");
-      nearest = `
-        nearest AS MATERIALIZED (
-          SELECT id, embedding <=> $1::vector AS distance
-            FROM chunks WHERE embedding IS NOT NULL
-           ORDER BY embedding <=> $1::vector LIMIT $2
-        )`;
-    }
-
-    const { rows } = await tx.query<ResultRow>(
-      `WITH ${nearest}
-       SELECT n.id AS chunk_id, c.document_id, d.title, c.content, 1 - n.distance AS score
-         FROM nearest AS n
-         JOIN chunks AS c ON c.id = n.id
-         JOIN documents AS d ON d.id = c.document_id
-        ORDER BY n.distance, n.id`,
-      [vector, limit],
-    );
-    return { strategy, results: rows.map(toResult) };
+    const { strategy, ranking } = await vectorRanking(tx, vector, limit, options);
+    const results = await withContent(tx, ranking, (chunk, { score }) => ({ ...chunk, score }));
+    return { strategy, results };
   });
+}
+
+async function vectorRanking(
+  tx: TenantTx,
+  vector: number[],
+  limit: number,
+  { exactSearchMaxChunks = EXACT_SEARCH_MAX_CHUNKS }: VectorSearchOptions,
+): Promise<{ strategy: VectorStrategy; ranking: Ranking }> {
+  const { rows: counted } = await tx.query<{ n: number }>(
+    'SELECT count(*)::int AS n FROM chunks WHERE embedding IS NOT NULL',
+  );
+  const strategy: VectorStrategy = counted[0]!.n <= exactSearchMaxChunks ? 'exact' : 'hnsw';
+
+  let sql: string;
+  if (strategy === 'exact') {
+    // MATERIALIZED keeps the planner away from the HNSW index: the tenant's
+    // chunks are fetched by tenant_id and every distance is computed.
+    sql = `
+      WITH candidates AS MATERIALIZED (
+        SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL
+      )
+      SELECT id, embedding <=> $1::vector AS distance
+        FROM candidates ORDER BY distance, id LIMIT $2`;
+  } else {
+    // Iterative scans keep walking the HNSW graph until enough rows pass the
+    // RLS filter. relaxed_order may return them slightly out of order, so the
+    // outer query sorts again.
+    await tx.query("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)");
+    sql = `
+      WITH nearest AS MATERIALIZED (
+        SELECT id, embedding <=> $1::vector AS distance
+          FROM chunks WHERE embedding IS NOT NULL
+         ORDER BY embedding <=> $1::vector LIMIT $2
+      )
+      SELECT id, distance FROM nearest ORDER BY distance, id`;
+  }
+
+  const { rows } = await tx.query<{ id: string; distance: number }>(sql, [JSON.stringify(vector), limit]);
+  return { strategy, ranking: rows.map((row) => ({ chunkId: row.id, score: 1 - row.distance })) };
+}
+
+// -----------------------------------------------------------------------------
+// Hybrid search
+// -----------------------------------------------------------------------------
+
+/** How many results each branch contributes before fusion. */
+export const HYBRID_DEPTH = 50;
+
+/**
+ * BM25 and vector search fused with Reciprocal Rank Fusion (see rrf.ts). Both
+ * branches run in one transaction, so they see the same data. Chunks whose
+ * embedding is pending can still be found through BM25. If the query cannot be
+ * embedded, this fails with 503 like mode=vector.
+ */
+export async function searchHybrid(
+  db: Db,
+  embeddings: EmbeddingProvider,
+  tenantId: string,
+  query: string,
+  limit: number,
+  options: VectorSearchOptions = {},
+): Promise<{ strategy: VectorStrategy; results: HybridResult[] }> {
+  const vector = await embedQuery(embeddings, query);
+
+  return db.withTenant(tenantId, async (tx) => {
+    await currentTenant(tx);
+    const bm25 = await bm25Ranking(tx, query, HYBRID_DEPTH);
+    const { strategy, ranking: nearest } = await vectorRanking(tx, vector, HYBRID_DEPTH, options);
+
+    const fused = fuseRankings(
+      bm25.map((r) => r.chunkId),
+      nearest.map((r) => r.chunkId),
+    ).slice(0, limit);
+
+    const results = await withContent(tx, fused, (chunk, f) => ({
+      ...chunk,
+      score: f.score,
+      bm25Rank: f.bm25Rank,
+      vectorRank: f.vectorRank,
+    }));
+    return { strategy, results };
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Shared helpers
+// -----------------------------------------------------------------------------
+
+type ChunkContent = Omit<SearchResult, 'score'>;
+
+/**
+ * Reads title and content for ranked chunk ids, through RLS, keeping the
+ * ranking's order. An id the tenant cannot see is dropped.
+ */
+async function withContent<R extends { chunkId: string }, T>(
+  tx: TenantTx,
+  ranking: R[],
+  build: (chunk: ChunkContent, ranked: R) => T,
+): Promise<T[]> {
+  if (ranking.length === 0) return [];
+  const { rows } = await tx.query<{ chunk_id: string; document_id: string; title: string; content: string }>(
+    `SELECT c.id AS chunk_id, c.document_id, d.title, c.content
+       FROM chunks AS c
+       JOIN documents AS d ON d.id = c.document_id
+      WHERE c.id = ANY ($1::bigint[])`,
+    [ranking.map((r) => r.chunkId)],
+  );
+  const byId = new Map(rows.map((row) => [row.chunk_id, row]));
+
+  const results: T[] = [];
+  for (const ranked of ranking) {
+    const row = byId.get(ranked.chunkId);
+    if (!row) continue;
+    results.push(
+      build({ chunkId: row.chunk_id, documentId: row.document_id, title: row.title, content: row.content }, ranked),
+    );
+  }
+  return results;
 }
 
 async function embedQuery(embeddings: EmbeddingProvider, query: string): Promise<number[]> {
@@ -132,14 +221,4 @@ async function embedQuery(embeddings: EmbeddingProvider, query: string): Promise
     console.error('[search] could not embed the query:', (err as Error).message);
     throw new HttpError(503, 'embedding_unavailable', 'Vector search is temporarily unavailable');
   }
-}
-
-function toResult(row: ResultRow): SearchResult {
-  return {
-    chunkId: row.chunk_id,
-    documentId: row.document_id,
-    title: row.title,
-    content: row.content,
-    score: row.score,
-  };
 }

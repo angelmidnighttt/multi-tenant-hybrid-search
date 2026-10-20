@@ -5,6 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { ingestDocument } from '../../src/documents/documents.service.ts';
 import { createDb, type Db } from '../../src/lib/db.ts';
 import { startTestDatabase, TENANT_A, TENANT_B, testConfig, type TestDatabase } from '../helpers/db.ts';
+import { referenceBm25 } from '../helpers/reference.ts';
 import { signToken, startTestServer, type TestServer } from '../helpers/server.ts';
 
 // ASCII-only texts, so the reference tokenizer is a plain split on spaces.
@@ -43,28 +44,6 @@ after(async () => {
   await db?.close();
   await testDb?.stop();
 });
-
-/** Lucene-style BM25, written independently of the SQL. Returns a score per document. */
-function referenceBm25(corpus: string[], query: string, k1 = 1.2, b = 0.75): Map<string, number> {
-  const docs = corpus.map((text) => text.split(' '));
-  const avgdl = docs.reduce((sum, d) => sum + d.length, 0) / docs.length;
-  const terms = [...new Set(query.split(' '))];
-  const scores = new Map<string, number>();
-  docs.forEach((doc, i) => {
-    let score = 0;
-    let matched = false;
-    for (const term of terms) {
-      const tf = doc.filter((token) => token === term).length;
-      if (tf === 0) continue;
-      matched = true;
-      const df = docs.filter((d) => d.includes(term)).length;
-      const idf = Math.log(1 + (docs.length - df + 0.5) / (df + 0.5));
-      score += (idf * tf * (k1 + 1)) / (tf + k1 * (1 - b + (b * doc.length) / avgdl));
-    }
-    if (matched) scores.set(corpus[i]!, score);
-  });
-  return scores;
-}
 
 /** Calls the SQL function as app_user and returns content -> score, in rank order. */
 const bm25 = (tenantId: string, query: string, limit = 10) =>
@@ -138,9 +117,9 @@ describe('app.bm25_search()', () => {
   });
 });
 
-describe('GET /search', () => {
+describe('GET /search?mode=bm25', () => {
   async function search(token: string | undefined, params: Record<string, string>) {
-    const res = await fetch(`${server.url}/search?${new URLSearchParams(params)}`, {
+    const res = await fetch(`${server.url}/search?${new URLSearchParams({ mode: 'bm25', ...params })}`, {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
     return { status: res.status, body: (await res.json()) as any };
@@ -177,7 +156,7 @@ describe('GET /search', () => {
       [{}, 'missing q'],
       [{ q: '   ' }, 'blank q'],
       [{ q: 'x'.repeat(501) }, 'q too long'],
-      [{ q: 'hoc', mode: 'hybrid' }, 'mode not available yet'],
+      [{ q: 'hoc', mode: 'semantic' }, 'unknown mode'],
       [{ q: 'hoc', limit: '0' }, 'limit too small'],
       [{ q: 'hoc', limit: '51' }, 'limit too large'],
       [{ q: 'hoc', limit: 'ten' }, 'limit not a number'],

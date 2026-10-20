@@ -7,7 +7,8 @@ import { runWorkerOnce } from '../../src/embeddings/embeddings.service.ts';
 import { createDb, type Db } from '../../src/lib/db.ts';
 import { searchVector } from '../../src/search/search.service.ts';
 import { startTestDatabase, TENANT_A, TENANT_B, testConfig, type TestDatabase } from '../helpers/db.ts';
-import { createFakeProvider, fakeVector, TEST_WORKER_OPTIONS, type FakeProvider } from '../helpers/fake-embeddings.ts';
+import { createFakeProvider, TEST_WORKER_OPTIONS, type FakeProvider } from '../helpers/fake-embeddings.ts';
+import { bruteForceVector } from '../helpers/reference.ts';
 import { signToken, startTestServer, type TestServer } from '../helpers/server.ts';
 
 const SHARED_TEXT = 'Quy chế học phí năm 2026'; // exists in both tenants: same vector
@@ -43,27 +44,6 @@ after(async () => {
   await testDb?.stop();
 });
 
-function cosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i]! * b[i]!;
-    na += a[i]! ** 2;
-    nb += b[i]! ** 2;
-  }
-  return dot / Math.sqrt(na * nb);
-}
-
-/** Exact ranking computed in JS from the same fake vectors. */
-function bruteForce(corpus: string[], query: string, limit: number) {
-  const q = fakeVector(query);
-  return corpus
-    .map((content) => ({ content, score: cosine(q, fakeVector(content)) }))
-    .sort((x, y) => y.score - x.score)
-    .slice(0, limit);
-}
-
 function assertSameRanking(actual: { content: string; score: number }[], expected: { content: string; score: number }[]) {
   assert.deepEqual(
     actual.map((r) => r.content),
@@ -95,7 +75,7 @@ describe('GET /search?mode=vector', () => {
   it('matches an exact brute-force ranking', async () => {
     const query = 'chính sách miễn giảm cho sinh viên';
     const { body } = await search(TENANT_A, { q: query, limit: '3' });
-    assertSameRanking(body.results, bruteForce(CORPUS_A, query, 3));
+    assertSameRanking(body.results, bruteForceVector(CORPUS_A, query, 3));
   });
 
   it("never returns another tenant's chunk, even one with the same vector", async () => {
@@ -148,17 +128,17 @@ describe('vector search strategies', () => {
   it('uses an exact scan up to the threshold', async () => {
     const { strategy, results } = await searchVector(db, queryModel, TENANT_A, query, 10);
     assert.equal(strategy, 'exact');
-    assertSameRanking(results, bruteForce(CORPUS_A, query, 10));
+    assertSameRanking(results, bruteForceVector(CORPUS_A, query, 10));
   });
 
   it('uses HNSW above the threshold, with the same results and tenant', async () => {
     const opts = { exactSearchMaxChunks: 0 };
     const a = await searchVector(db, queryModel, TENANT_A, query, 10, opts);
     assert.equal(a.strategy, 'hnsw');
-    assertSameRanking(a.results, bruteForce(CORPUS_A, query, 10));
+    assertSameRanking(a.results, bruteForceVector(CORPUS_A, query, 10));
 
     const b = await searchVector(db, queryModel, TENANT_B, SHARED_TEXT, 10, opts);
-    assertSameRanking(b.results, bruteForce(CORPUS_B, SHARED_TEXT, 10));
+    assertSameRanking(b.results, bruteForceVector(CORPUS_B, SHARED_TEXT, 10));
     for (const r of b.results) assert.ok(documentIds[TENANT_B]!.includes(r.documentId));
 
     const crowded = await searchVector(db, queryModel, TENANT_B, 'Giờ mở cửa thư viện', CORPUS_B.length, opts);
