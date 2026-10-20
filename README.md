@@ -1,5 +1,8 @@
 # Multi-tenant Hybrid Search
 
+[![CI](https://github.com/angelmidnighttt/multi-tenant-hybrid-search/actions/workflows/ci.yml/badge.svg)](https://github.com/angelmidnighttt/multi-tenant-hybrid-search/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Multi-tenant search on PostgreSQL: **Row-Level Security** for tenant isolation,
 **pgvector** for semantic search, and **BM25** for keyword ranking, fused into
 one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
@@ -108,6 +111,25 @@ const docs = await db.withTenant(tenantId, async (tx) => {
 error. Any attempt to use `tx` after it returns is rejected, because by then the
 connection may be serving another tenant.
 
+## Testing
+
+```bash
+npm test
+```
+
+Docker must be running. Each test file starts its own throwaway PostgreSQL
+container ([Testcontainers](https://node.testcontainers.org/)) built from the
+same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
+(A and B) seeded. The tests never touch your development database.
+
+| File | What it proves |
+|---|---|
+| `test/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or write BM25 stats. Vietnamese unaccented search works. |
+| `test/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
+
+CI runs type checking and the full suite on Node 22 and 24 for every push and
+pull request.
+
 ## Project structure
 
 ```
@@ -123,6 +145,11 @@ src/
   http.ts                minimal node:http server: routing, JSON body, errors
   routes.ts              route table
   health.ts              GET /health
+test/
+  helpers/db.ts          starts a throwaway database and seeds tenants A and B
+  rls.test.ts            database-level isolation tests
+  with-tenant.test.ts    withTenant() isolation tests
+.github/workflows/ci.yml type check + tests on Node 22 and 24
 docker-compose.yml       PostgreSQL 17 + pgvector 0.8.1
 ```
 
@@ -146,6 +173,7 @@ tokenization + diacritic removal), so `hoc sinh` matches `học sinh`.
 | `npm run dev` | Run the API and restart on file changes |
 | `npm start` | Run the API |
 | `npm run typecheck` | Type-check with `tsc` (no output files) |
+| `npm test` | Run the test suite (requires Docker) |
 | `npm run db:up` | Start the database and wait until it is healthy |
 | `npm run db:reset` | **Delete all data** and recreate the database from `db/init/` |
 
@@ -177,10 +205,14 @@ change them, run `npm run db:reset`.
 - [x] Schema, roles, and RLS policies
 - [x] Docker setup (PostgreSQL 17 + pgvector)
 - [x] Node.js foundation: config, `withTenant()`, HTTP server, health check
-- [ ] Automated isolation test suite (`node:test` + Testcontainers)
+- [x] Automated isolation test suite (`node:test` + Testcontainers) and CI
 - [ ] Authentication: tenant taken from a verified JWT claim
 - [ ] Ingestion: `POST /documents` → chunking → embeddings (Ollama `bge-m3`)
 - [ ] BM25 search with per-tenant statistics
 - [ ] Vector search with good recall for small tenants
 - [ ] Hybrid search with Reciprocal Rank Fusion (RRF)
 - [ ] Seed data and quality and latency benchmarks
+
+## License
+
+[MIT](LICENSE)
