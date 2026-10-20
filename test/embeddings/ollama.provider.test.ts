@@ -18,7 +18,9 @@ before(async () => {
     requests.push({ path: req.url!, body });
 
     res.setHeader('content-type', 'application/json');
-    if (body.model !== INSTALLED_MODEL) {
+    if (body.model === 'slow-model') {
+      setTimeout(() => res.end('{}'), 1000);
+    } else if (body.model !== INSTALLED_MODEL) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: `model '${body.model}' not found` }));
     } else if (req.url === '/api/show') {
@@ -56,6 +58,11 @@ describe('Ollama provider', () => {
     const provider = createOllamaProvider({ ollamaUrl: baseUrl, model: 'missing-model' });
     await assert.rejects(provider.assertModelAvailable(), /not pulled yet\. Run: npm run models:pull/);
     await assert.rejects(provider.embed(['x']), /\/api\/embed failed: 404/);
+  });
+
+  it('gives up after the configured timeout', async () => {
+    const provider = createOllamaProvider({ ollamaUrl: baseUrl, model: 'slow-model' }, { timeoutMs: 100 });
+    await assert.rejects(provider.embed(['x']), /did not respond within 100ms/);
   });
 
   it('explains an unreachable Ollama', async () => {

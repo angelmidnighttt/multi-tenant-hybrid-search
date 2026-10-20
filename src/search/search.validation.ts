@@ -1,7 +1,7 @@
 import { HttpError } from '../lib/http.ts';
 
-// "vector" and "hybrid" are added in the next steps.
-const MODES = ['bm25'] as const;
+// "hybrid" is added in the next step.
+const MODES = ['bm25', 'vector'] as const;
 export type SearchMode = (typeof MODES)[number];
 
 export interface SearchInput {

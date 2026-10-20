@@ -10,8 +10,8 @@ TypeScript executed directly by Node, without a build step.
 
 > **Status: work in progress.** The database schema, tenant isolation, the
 > Node.js foundation, JWT authentication, document ingestion, background
-> embeddings, and BM25 keyword search are done and tested. Vector and hybrid
-> search are next (see [Roadmap](#roadmap)).
+> embeddings, BM25 keyword search, and vector search are done and tested.
+> Hybrid ranking is next (see [Roadmap](#roadmap)).
 
 ## Why this design
 
@@ -42,8 +42,11 @@ Two measured findings shape the design:
   can become. The function filters by tenant explicitly and returns only
   `(chunk_id, score)`. Titles and content are then read through RLS, so even a
   bug in the function could not expose another tenant's text.
-- **HNSW + tenant filter is a post-filter**, so small tenants can get poor
-  recall. This will be addressed in the vector search step.
+- **HNSW + tenant filter is a post-filter.** HNSW walks the whole table and RLS
+  filters afterwards, so a small tenant's chunks are mostly crowded out. On 57k
+  chunks, recall@10 was 0.01 for a 50-chunk tenant and 0.15 for a 2k-chunk
+  tenant. Vector search therefore scans a tenant's chunks exactly (recall 1.0)
+  up to 20k chunks, and uses HNSW with iterative scans above that.
 
 ## Requirements
 
@@ -183,13 +186,20 @@ curl -G http://localhost:3000/search -H "Authorization: Bearer $TOKEN" \
   --data-urlencode "q=học phí" --data-urlencode "mode=bm25" --data-urlencode "limit=3"
 # 200 {"mode":"bm25","results":[
 #   {"chunk_id":"1","document_id":"1","title":"Quy chế học phí","content":"...","score":2.347}, ...]}
+
+curl -G http://localhost:3000/search -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "q=Tôi muốn thuê chỗ ở trong trường" --data-urlencode "mode=vector"
+# 200 {"mode":"vector","strategy":"exact","results":[
+#   {"chunk_id":"2","document_id":"2","title":"Đăng ký ký túc xá","content":"...","score":0.626}, ...]}
 ```
 
 | Parameter | Default | Notes |
 |---|---|---|
 | `q` | (required) | Up to 500 characters. Diacritics are optional: `hoc phi` matches `học phí`. |
-| `mode` | `bm25` | `vector` and `hybrid` come in the next steps |
+| `mode` | `bm25` | `bm25` (keywords) or `vector` (meaning). `hybrid` comes next. |
 | `limit` | `10` | 1 to 50 |
+
+#### `mode=bm25`
 
 BM25 ranking works like Lucene's: `k1 = 1.2`, `b = 0.75`, and
 `idf = ln(1 + (N − df + 0.5) / (df + 0.5))`. A chunk matching **any** query word
@@ -199,9 +209,27 @@ query time from **the caller's tenant only**, so they are always exact and no
 other tenant's data affects the ranking.
 
 BM25 matches words, not meaning, and Vietnamese is matched syllable by syllable.
-"Làm sao để không phải đóng tiền học?" finds the tuition document only through
-the syllable "học", which also gives unrelated documents a score. Vector search
-and the hybrid ranking (next steps) address this.
+For "Tôi muốn thuê chỗ ở trong trường" ("I want to rent a place to stay on
+campus"), BM25 ranks the library opening hours first, because they mention
+"trong tuần" and so share the syllable "trong". `mode=vector` ranks the
+dormitory registration first.
+
+#### `mode=vector`
+
+The API embeds the query with the same Ollama model as the worker, then ranks
+the tenant's chunks by cosine similarity. `score = 1 − cosine distance`, so
+higher is closer. Chunks whose embedding is still pending are not searched yet.
+
+| Tenant size (embedded chunks) | `strategy` | Why |
+|---|---|---|
+| up to 20,000 | `exact` | Every chunk of the tenant is compared, found through the `tenant_id` index. Recall is 1.0. Measured at 1.5 ms for 50 chunks and 144 ms for 50,000. |
+| above 20,000 | `hnsw` | HNSW index with `hnsw.iterative_scan = relaxed_order`, so the search keeps going until enough of the tenant's rows pass RLS. Recall measured at 0.98–1.0, in about 1 ms. |
+
+Everything runs under RLS. Ordering by `<=>` is not subject to the `LEAKPROOF`
+restriction that blocks the GIN index, so no RLS bypass is needed. If Ollama is
+down or slow (30 s timeout), `mode=vector` answers `503 embedding_unavailable`
+and `mode=bm25` keeps working. Ollama runs with `OLLAMA_KEEP_ALIVE=24h`, so the
+model is not unloaded between searches (reloading it on CPU takes seconds).
 
 ### See the isolation yourself
 
@@ -251,11 +279,12 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 |---|---|
 | `test/database/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or become the `app_search` role. Vietnamese unaccented search works. |
 | `test/search/search.test.ts` | BM25 scores equal an independent reference implementation. The same text scores differently in two tenants because statistics are per tenant. Diacritics are ignored, and OR semantics and the limit work. The RLS-bypassing function never returns another tenant's chunk ids, checked on its raw output, and returns nothing without a tenant. `GET /search` returns only the token's tenant and validates its parameters. |
+| `test/search/vector.test.ts` | `mode=vector` matches an exact brute-force ranking, and so do both strategies (`exact` and a forced `hnsw`). A tenant never gets another tenant's chunk, even one with an identical vector, and is never crowded out by another tenant's closer chunks. Pending chunks are excluded. An unavailable model or a wrong vector size gives `503`. |
 | `test/documents/chunker.test.ts` | Chunking (no database): never exceeds the size limit, never cuts a sentence, covers all text in order, overlaps consecutive chunks, keeps paragraph breaks, and normalizes NFD to NFC. |
 | `test/documents/documents.test.ts` | `POST /documents`. Documents and chunks are stored under the token's tenant. Re-sending an `external_id` replaces the document. The same `external_id` in two tenants gives two separate documents. A `tenant_id` in the body is rejected. Invalid bodies write nothing. |
 | `test/auth/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
 | `test/embeddings/embeddings.test.ts` | The job queue and worker, with a fake model. Every chunk is embedded in batches and the job finishes. A claimed job is never handed out twice. A re-ingest during processing loses nothing. Failures back off and stop after 5 attempts. Successful batches are kept. Wrong vector sizes are rejected. `app_user` cannot read the queue table, cannot queue another tenant's document, and cannot finish or fail another tenant's job. |
-| `test/embeddings/ollama.provider.test.ts` | The Ollama client against a stand-in HTTP server: request format, and clear errors when the model is missing or Ollama is unreachable. |
+| `test/embeddings/ollama.provider.test.ts` | The Ollama client against a stand-in HTTP server: request format, timeouts, and clear errors when the model is missing or Ollama is unreachable. |
 | `test/lib/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
 
 CI runs type checking and the full suite on Node 22 and 24 for every push and
@@ -299,7 +328,7 @@ src/
   search/
     search.handler.ts           GET /search: HTTP in/out
     search.validation.ts        query string validation (q, mode, limit)
-    search.service.ts           calls app.bm25_search(), reads titles/content through RLS
+    search.service.ts           bm25 via app.bm25_search(); vector: exact or HNSW, under RLS
 scripts/
   token.ts                      dev helper: mint a JWT for a tenant
 test/                           mirrors src/
@@ -313,6 +342,7 @@ test/                           mirrors src/
   documents/documents.test.ts   ingestion
   embeddings/*.test.ts          job queue, worker, Ollama client
   search/search.test.ts         BM25 scoring, isolation, GET /search
+  search/vector.test.ts         vector search: ranking, strategies, isolation, 503
 .github/workflows/ci.yml        type check + tests on Node 22 and 24
 docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1, Ollama 0.35.1 (CPU)
 ```
@@ -375,11 +405,12 @@ change them, run `npm run db:reset`.
 | `JWT_SECRET` | (required) | HS256 secret, at least 32 characters |
 | `JWT_ISSUER` | `hybrid-search` | Required `iss` claim |
 | `JWT_AUDIENCE` | `hybrid-search-api` | Required `aud` claim |
-| `OLLAMA_URL` | `http://localhost:11434` | Worker only: Ollama server |
-| `EMBEDDING_MODEL` | `bge-m3` | Worker only: must produce 1024-dimension vectors |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama server (worker, and API for `mode=vector`) |
+| `EMBEDDING_MODEL` | `bge-m3` | Must produce 1024-dimension vectors |
 
-The API needs `DATABASE_URL` and `JWT_SECRET`. The worker needs `DATABASE_URL`
-and the Ollama settings, but not `JWT_SECRET`.
+The API needs `DATABASE_URL` and `JWT_SECRET`. It starts without Ollama, but
+then `mode=vector` returns `503`. The worker needs `DATABASE_URL` and the Ollama
+settings, but not `JWT_SECRET`.
 
 ## Roadmap
 
@@ -391,7 +422,7 @@ and the Ollama settings, but not `JWT_SECRET`.
 - [x] Ingestion: `POST /documents`, sentence-aware chunking, idempotent re-ingest by `external_id`
 - [x] Embeddings: background worker with Ollama `bge-m3`, job queue with retries
 - [x] BM25 search with per-tenant statistics (`GET /search?mode=bm25`)
-- [ ] Vector search with good recall for small tenants
+- [x] Vector search with good recall for small tenants (`GET /search?mode=vector`)
 - [ ] Hybrid search with Reciprocal Rank Fusion (RRF)
 - [ ] Seed data and quality and latency benchmarks
 

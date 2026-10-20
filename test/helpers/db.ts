@@ -69,5 +69,13 @@ export const TEST_AUTH: AuthConfig = {
 };
 
 export function testConfig(databaseUrl: string, dbPoolMax = 5): Config {
-  return { port: 0, databaseUrl, dbPoolMax, dbStatementTimeoutMs: 5000, auth: TEST_AUTH };
+  return {
+    port: 0,
+    databaseUrl,
+    dbPoolMax,
+    dbStatementTimeoutMs: 5000,
+    auth: TEST_AUTH,
+    // Tests inject a fake embedding provider; this address is never called.
+    embedding: { ollamaUrl: 'http://127.0.0.1:9', model: 'unused' },
+  };
 }

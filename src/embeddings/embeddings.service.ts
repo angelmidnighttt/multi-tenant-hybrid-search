@@ -1,5 +1,5 @@
 import type { Db } from '../lib/db.ts';
-import { EMBEDDING_DIMENSIONS, type EmbeddingProvider } from './embedding.provider.ts';
+import { assertValidEmbeddings, type EmbeddingProvider } from './embedding.provider.ts';
 
 export interface EmbeddingJob {
   tenantId: string;
@@ -99,7 +99,7 @@ export async function processJob(
   for (let i = 0; i < pending.length; i += batchSize) {
     const batch = pending.slice(i, i + batchSize);
     const vectors = await provider.embed(batch.map((chunk) => chunk.content));
-    assertValidVectors(vectors, batch.length);
+    assertValidEmbeddings(vectors, batch.length);
 
     await db.withTenant(job.tenantId, (tx) =>
       tx.query(
@@ -116,18 +116,4 @@ export async function processJob(
     tx.query('SELECT app.finish_embedding_job($1, $2)', [job.documentId, job.generation]),
   );
   return pending.length;
-}
-
-function assertValidVectors(vectors: number[][], expectedCount: number): void {
-  if (vectors.length !== expectedCount) {
-    throw new Error(`Embedding provider returned ${vectors.length} vectors for ${expectedCount} texts`);
-  }
-  for (const vector of vectors) {
-    if (vector.length !== EMBEDDING_DIMENSIONS) {
-      throw new Error(
-        `Embedding has ${vector.length} dimensions, expected ${EMBEDDING_DIMENSIONS}. Check EMBEDDING_MODEL.`,
-      );
-    }
-    if (!vector.every(Number.isFinite)) throw new Error('Embedding contains non-finite values');
-  }
 }

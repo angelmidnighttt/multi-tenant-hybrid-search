@@ -1,10 +1,12 @@
 import type { AddressInfo } from 'node:net';
 import { SignJWT } from 'jose';
 import { createAuth } from '../../src/auth/auth.ts';
+import type { EmbeddingProvider } from '../../src/embeddings/embedding.provider.ts';
 import { createDb } from '../../src/lib/db.ts';
 import { createHttpServer } from '../../src/lib/http.ts';
 import { buildRoutes } from '../../src/routes.ts';
 import { TEST_AUTH, testConfig } from './db.ts';
+import { createFakeProvider } from './fake-embeddings.ts';
 
 export interface TestServer {
   /** Base URL, e.g. http://127.0.0.1:54321 */
@@ -12,10 +14,16 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-/** Starts the real app (all routes) on a random port against the given database. */
-export async function startTestServer(appUrl: string): Promise<TestServer> {
+/**
+ * Starts the real app (all routes) on a random port against the given
+ * database. Query embeddings come from a fake model unless one is passed.
+ */
+export async function startTestServer(
+  appUrl: string,
+  { embeddings = createFakeProvider() }: { embeddings?: EmbeddingProvider } = {},
+): Promise<TestServer> {
   const db = await createDb(testConfig(appUrl));
-  const server = createHttpServer(buildRoutes({ db, auth: createAuth(TEST_AUTH) }));
+  const server = createHttpServer(buildRoutes({ db, auth: createAuth(TEST_AUTH), embeddings }));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
 

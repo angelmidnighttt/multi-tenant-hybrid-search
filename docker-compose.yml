@@ -35,6 +35,10 @@ services:
     image: ollama/ollama:0.35.1
     container_name: hybrid-search-ollama
     restart: unless-stopped
+    environment:
+      # Keep the model loaded: reloading it on CPU takes ~10 s, which a search
+      # request would otherwise pay after 5 idle minutes (Ollama's default).
+      OLLAMA_KEEP_ALIVE: 24h
     ports:
       - "127.0.0.1:${OLLAMA_PORT:-11434}:11434" # localhost only
     volumes:

@@ -177,7 +177,7 @@ describe('GET /search', () => {
       [{}, 'missing q'],
       [{ q: '   ' }, 'blank q'],
       [{ q: 'x'.repeat(501) }, 'q too long'],
-      [{ q: 'hoc', mode: 'vector' }, 'mode not available yet'],
+      [{ q: 'hoc', mode: 'hybrid' }, 'mode not available yet'],
       [{ q: 'hoc', limit: '0' }, 'limit too small'],
       [{ q: 'hoc', limit: '51' }, 'limit too large'],
       [{ q: 'hoc', limit: 'ten' }, 'limit not a number'],

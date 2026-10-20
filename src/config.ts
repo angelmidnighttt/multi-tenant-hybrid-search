@@ -24,6 +24,8 @@ export interface EmbeddingConfig {
 export interface Config extends DbConfig {
   port: number;
   auth: AuthConfig;
+  /** Used to embed search queries (mode=vector). */
+  embedding: EmbeddingConfig;
 }
 
 /** Configuration of the embedding worker process (npm run worker). */
@@ -36,16 +38,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...loadDbConfig(env),
     port: positiveInt(env, 'PORT', 3000),
     auth: loadAuthConfig(env),
+    embedding: loadEmbeddingConfig(env),
   };
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   return {
     ...loadDbConfig(env),
-    embedding: {
-      ollamaUrl: env.OLLAMA_URL || 'http://localhost:11434',
-      model: env.EMBEDDING_MODEL || 'bge-m3',
-    },
+    embedding: loadEmbeddingConfig(env),
+  };
+}
+
+function loadEmbeddingConfig(env: NodeJS.ProcessEnv): EmbeddingConfig {
+  return {
+    ollamaUrl: env.OLLAMA_URL || 'http://localhost:11434',
+    model: env.EMBEDDING_MODEL || 'bge-m3',
   };
 }
 
