@@ -14,7 +14,8 @@ export interface IngestResult {
  *
  * With an external_id that already exists in this tenant, the document is
  * replaced (title, source, metadata updated; old chunks deleted, new ones
- * inserted), so re-sending the same document is idempotent.
+ * inserted), so re-sending the same document is idempotent. Either way an
+ * embedding job is queued for the worker.
  */
 export async function ingestDocument(db: Db, tenantId: string, input: DocumentInput): Promise<IngestResult> {
   // CPU work happens before the transaction so it does not hold a connection.
@@ -42,6 +43,8 @@ export async function ingestDocument(db: Db, tenantId: string, input: DocumentIn
        SELECT $1, ordinality - 1, content FROM unnest($2::text[]) WITH ORDINALITY AS t(content, ordinality)`,
       [doc.id, chunks],
     );
+    // Same transaction: a document is never stored without its embedding job.
+    await tx.query('SELECT app.enqueue_embedding_job($1)', [doc.id]);
     return { id: doc.id, replaced: !doc.inserted, chunkCount: chunks.length };
   });
 }

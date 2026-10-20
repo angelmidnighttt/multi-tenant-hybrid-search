@@ -9,8 +9,8 @@ one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
 TypeScript executed directly by Node, without a build step.
 
 > **Status: work in progress.** The database schema, tenant isolation, the
-> Node.js foundation, JWT authentication, and document ingestion are done and
-> tested. Embeddings, BM25, vector, and hybrid search are next (see
+> Node.js foundation, JWT authentication, document ingestion, and background
+> embeddings are done and tested. BM25, vector, and hybrid search are next (see
 > [Roadmap](#roadmap)).
 
 ## Why this design
@@ -30,6 +30,7 @@ follows:
 | Foreign key checks bypass RLS | Foreign keys are composite `(tenant_id, id)`, so a row can never reference another tenant's row. |
 | Unique violations reveal other tenants' data | Every `UNIQUE` constraint includes `tenant_id`. |
 | Global BM25 statistics leak across tenants | IDF and average document length are stored **per tenant**. |
+| A background worker must see every tenant's pending work | The embedding queue has no direct privileges for any role. It is reachable only through `SECURITY DEFINER` functions, and only `claim_embedding_jobs()` crosses tenants, returning ids only. Chunk content is still read and written through `withTenant()`. |
 
 There is also one finding that shapes the design:
 
@@ -62,10 +63,14 @@ cp app.env.example app.env
 #    -> set JWT_SECRET to a random value (the app refuses to start with the placeholder):
 #       node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
-# 3. Install and run
+# 3. Install and start the containers
 npm install
-npm run db:up        # starts PostgreSQL 17 + pgvector and applies db/init/*.sql
-npm run dev          # starts the API with --watch
+npm run up           # PostgreSQL 17 + pgvector (applies db/init/*.sql) and Ollama
+npm run models:pull  # one time: downloads the bge-m3 embedding model (~1.2 GB)
+
+# 4. Run the API and the embedding worker (two terminals)
+npm run dev          # API with --watch
+npm run worker       # embeds new chunks in the background
 
 curl http://localhost:3000/health
 # {"status":"ok"}
@@ -141,6 +146,32 @@ afterwards (`embedding_status: "pending"`).
 > rather than inline (`-d '...'`). Command-line arguments can be re-encoded by
 > the console code page, which turns Vietnamese characters into `?`.
 
+### Embeddings
+
+`npm run worker` runs separately from the API. Ingesting a document queues an
+embedding job in the same transaction, so a stored document always has its
+job. The worker then repeats this loop:
+
+1. **Claim** up to 5 ready jobs across all tenants (`FOR UPDATE SKIP LOCKED`,
+   with a 5-minute lease, so several workers can run side by side).
+2. For each job, inside `withTenant(job.tenant)`, **read** the chunks that have
+   no embedding yet.
+3. **Embed** them with Ollama in batches of 16. This happens outside any
+   transaction, so no database connection is held during the slow model call.
+4. **Write** each batch in its own short transaction, so progress survives a
+   failure and a retry only embeds what is left. Then **finish** the job.
+
+A failed job is retried after 30 s, 1 min, 2 min, and 4 min. The fifth failure
+is final, and the error is kept in `last_error`. If a document is re-ingested
+while its job is being processed, the job's `generation` changes. The old run
+cannot finish it, so the new chunks are embedded too. Vectors with the wrong
+number of dimensions (a misconfigured `EMBEDDING_MODEL`) fail the job instead
+of being stored.
+
+The worker refuses to start if Ollama is unreachable or the model has not been
+pulled. On `Ctrl+C` it finishes the current round and exits; press it twice to
+quit immediately.
+
 ### See the isolation yourself
 
 ```bash
@@ -191,10 +222,12 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 | `test/documents/chunker.test.ts` | Chunking (no database): never exceeds the size limit, never cuts a sentence, covers all text in order, overlaps consecutive chunks, keeps paragraph breaks, and normalizes NFD to NFC. |
 | `test/documents/documents.test.ts` | `POST /documents`. Documents and chunks are stored under the token's tenant. Re-sending an `external_id` replaces the document. The same `external_id` in two tenants gives two separate documents. A `tenant_id` in the body is rejected. Invalid bodies write nothing. |
 | `test/auth/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
+| `test/embeddings/embeddings.test.ts` | The job queue and worker, with a fake model. Every chunk is embedded in batches and the job finishes. A claimed job is never handed out twice. A re-ingest during processing loses nothing. Failures back off and stop after 5 attempts. Successful batches are kept. Wrong vector sizes are rejected. `app_user` cannot read the queue table, cannot queue another tenant's document, and cannot finish or fail another tenant's job. |
+| `test/embeddings/ollama.provider.test.ts` | The Ollama client against a stand-in HTTP server: request format, and clear errors when the model is missing or Ollama is unreachable. |
 | `test/lib/with-tenant.test.ts` | The app's DB layer. It refuses to start as a role that bypasses RLS. A reused connection never leaks the previous tenant. Callbacks roll back on error. A stale `tx` is rejected, and so are non-UUID tenant ids. 200 concurrent transactions for two tenants stay isolated. |
 
 CI runs type checking and the full suite on Node 22 and 24 for every push and
-pull request.
+pull request. CI does not need Ollama: tests use a deterministic fake model.
 
 ## Project structure
 
@@ -204,12 +237,14 @@ db/init/                 SQL run once when the database volume is created
   002_roles.sql          app_owner (owns objects), app_user (used by the app)
   003_schema.sql         tables, Vietnamese full-text config, indexes
   004_rls.sql            RLS policies and grants
+  005_embedding_jobs.sql embedding job queue + its SECURITY DEFINER functions
 src/
-  main.ts                       entry point: config → db → auth → HTTP server
+  main.ts                       API entry point: config → db → auth → HTTP server
+  worker.ts                     embedding worker entry point (separate process)
   config.ts                     environment variable loading and validation
   routes.ts                     route table: which handler serves which path
   lib/                          shared infrastructure, no business logic
-    db.ts                       connection pool + withTenant()
+    db.ts                       connection pool + withTenant() / withoutTenant()
     http.ts                     minimal node:http server: routing, JSON body, errors
     uuid.ts                     UUID validation
   auth/
@@ -224,18 +259,24 @@ src/
     documents.validation.ts     request body validation
     documents.service.ts        upsert by external_id + chunk insert, in a tenant transaction
     chunker.ts                  sentence-aware chunking with overlap
+  embeddings/
+    embedding.provider.ts       EmbeddingProvider interface (1024 dimensions)
+    ollama.provider.ts          Ollama /api/embed client
+    embeddings.service.ts       claim → embed in batches → write → finish/fail
 scripts/
   token.ts                      dev helper: mint a JWT for a tenant
 test/                           mirrors src/
   helpers/db.ts                 starts a throwaway database and seeds tenants A and B
   helpers/server.ts             starts the real app on a random port, signs test tokens
+  helpers/fake-embeddings.ts    deterministic fake embedding model
   database/rls.test.ts          database-level isolation
   lib/with-tenant.test.ts       withTenant() isolation
   auth/auth.test.ts             HTTP + JWT
   documents/chunker.test.ts     chunking (no database)
   documents/documents.test.ts   ingestion
+  embeddings/*.test.ts          job queue, worker, Ollama client
 .github/workflows/ci.yml        type check + tests on Node 22 and 24
-docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1
+docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1, Ollama 0.35.1 (CPU)
 ```
 
 Each feature lives in its own folder and follows the same split: a
@@ -252,6 +293,7 @@ checks input. `lib/` holds infrastructure that knows nothing about features.
 | `chunks` | The unit of search. Each chunk has its text, a generated `tsv` for BM25, `token_count` (document length), and a `vector(1024)` embedding. |
 | `bm25_tenant_stats` | Per-tenant chunk count and total tokens (for average document length). |
 | `bm25_term_stats` | Per-tenant document frequency of each term (for IDF). |
+| `embedding_jobs` | One pending embedding job per document: attempts, backoff, lease, last error. No direct access; see [Embeddings](#embeddings). |
 
 Full-text search uses a custom `app.vn_unaccent` configuration (whitespace
 tokenization + diacritic removal), so `hoc sinh` matches `học sinh`.
@@ -265,8 +307,11 @@ tokenization + diacritic removal), so `hoc sinh` matches `học sinh`.
 | `npm run typecheck` | Type-check with `tsc` (no output files) |
 | `npm test` | Run the test suite (requires Docker) |
 | `npm run -s token -- <tenant-id>` | Print a dev JWT for a tenant (`--sub`, `--ttl` optional) |
-| `npm run db:up` | Start the database and wait until it is healthy |
-| `npm run db:reset` | **Delete all data** and recreate the database from `db/init/` |
+| `npm run worker` | Run the embedding worker |
+| `npm run up` | Start all containers (database + Ollama) and wait until healthy |
+| `npm run db:up` | Start only the database |
+| `npm run db:reset` | **Delete all database data** and recreate it from `db/init/`. Downloaded models are kept. |
+| `npm run models:pull` | Download the `bge-m3` model into the Ollama container (one time) |
 
 Scripts in `db/init/` run only when the database volume is empty. After you
 change them, run `npm run db:reset`.
@@ -281,6 +326,7 @@ change them, run `npm run db:reset`.
 | `POSTGRES_DB` | Database name (default `hybrid_search`) |
 | `APP_DB_PASSWORD` | Password assigned to `app_user` on first start |
 | `DB_PORT` | Host port (default `5432`, bound to `127.0.0.1` only) |
+| `OLLAMA_PORT` | Host port for Ollama (default `11434`, bound to `127.0.0.1` only) |
 
 `app.env` is used by the Node app:
 
@@ -293,6 +339,11 @@ change them, run `npm run db:reset`.
 | `JWT_SECRET` | (required) | HS256 secret, at least 32 characters |
 | `JWT_ISSUER` | `hybrid-search` | Required `iss` claim |
 | `JWT_AUDIENCE` | `hybrid-search-api` | Required `aud` claim |
+| `OLLAMA_URL` | `http://localhost:11434` | Worker only: Ollama server |
+| `EMBEDDING_MODEL` | `bge-m3` | Worker only: must produce 1024-dimension vectors |
+
+The API needs `DATABASE_URL` and `JWT_SECRET`. The worker needs `DATABASE_URL`
+and the Ollama settings, but not `JWT_SECRET`.
 
 ## Roadmap
 
@@ -302,7 +353,7 @@ change them, run `npm run db:reset`.
 - [x] Automated isolation test suite (`node:test` + Testcontainers) and CI
 - [x] Authentication: tenant taken from a verified JWT claim (`GET /me`)
 - [x] Ingestion: `POST /documents`, sentence-aware chunking, idempotent re-ingest by `external_id`
-- [ ] Embeddings: background worker with Ollama `bge-m3`
+- [x] Embeddings: background worker with Ollama `bge-m3`, job queue with retries
 - [ ] BM25 search with per-tenant statistics
 - [ ] Vector search with good recall for small tenants
 - [ ] Hybrid search with Reciprocal Rank Fusion (RRF)

@@ -30,5 +30,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # Embedding model server (CPU). Pull the model once with: npm run models:pull
+  ollama:
+    image: ollama/ollama:0.35.1
+    container_name: hybrid-search-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434" # localhost only
+    volumes:
+      - ollama:/root/.ollama                     # downloaded models survive restarts
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:
+  ollama:

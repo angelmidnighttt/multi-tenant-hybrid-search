@@ -13,8 +13,11 @@
     "typecheck": "tsc",
     "test": "node --test \"test/**/*.test.ts\"",
     "token": "node --env-file-if-exists=app.env scripts/token.ts",
-    "db:up": "docker compose up -d --wait",
-    "db:reset": "docker compose down -v && docker compose up -d --wait"
+    "worker": "node --env-file-if-exists=app.env src/worker.ts",
+    "up": "docker compose up -d --wait",
+    "db:up": "docker compose up -d --wait db",
+    "db:reset": "docker compose rm -sfv db && docker volume rm hybrid-search_pgdata && docker compose up -d --wait db",
+    "models:pull": "docker compose up -d --wait ollama && docker compose exec ollama ollama pull bge-m3"
   },
   "dependencies": {
     "jose": "^6.2.13",

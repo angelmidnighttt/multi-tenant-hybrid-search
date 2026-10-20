@@ -93,6 +93,19 @@ describe('withTenant', () => {
     });
   });
 
+  it('withoutTenant sees no tenant data at all', async () => {
+    await usingDb(1, async (db) => {
+      const row = await db.withoutTenant(async (tx) => {
+        const { rows } = await tx.query(
+          "SELECT current_setting('app.tenant_id', true) AS tenant, (SELECT count(*)::int FROM documents) AS docs",
+        );
+        return rows[0]!;
+      });
+      assert.ok(!row.tenant, 'no tenant is set');
+      assert.equal(row.docs, 0);
+    });
+  });
+
   it('keeps concurrent transactions of different tenants isolated', async () => {
     await usingDb(5, async (db) => {
       const results = await Promise.all(
