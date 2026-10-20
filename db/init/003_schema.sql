@@ -118,31 +118,10 @@ CREATE TABLE app.chunks (
 );
 
 -- GIN index for full-text search. Under RLS the planner CANNOT use this index
--- (the @@ operator is not leakproof), so BM25 queries will go through a
--- SECURITY DEFINER function in a later step.
+-- (the @@ operator is not leakproof), so BM25 search goes through
+-- app.bm25_search(), which runs without RLS (see 006_bm25_search.sql).
 CREATE INDEX chunks_tsv_gin ON app.chunks USING gin (tsv);
 
 -- Table-wide HNSW index (cosine). Tenant filtering is a post-filter -> recall is
 -- handled in the vector search step.
 CREATE INDEX chunks_embedding_hnsw ON app.chunks USING hnsw (embedding vector_cosine_ops);
-
--- -----------------------------------------------------------------------------
--- BM25 statistics computed separately for EACH tenant (IDF and average document
--- length are not influenced by other tenants' data). Refreshed in batches in the
--- BM25 step.
--- -----------------------------------------------------------------------------
-CREATE TABLE app.bm25_tenant_stats (
-  tenant_id    uuid        PRIMARY KEY DEFAULT app.current_tenant_id()
-                           REFERENCES app.tenants (id) ON DELETE CASCADE,
-  chunk_count  bigint      NOT NULL DEFAULT 0,        -- N
-  total_tokens bigint      NOT NULL DEFAULT 0,        -- avgdl = total_tokens / chunk_count
-  refreshed_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE app.bm25_term_stats (
-  tenant_id uuid    NOT NULL DEFAULT app.current_tenant_id()
-                    REFERENCES app.tenants (id) ON DELETE CASCADE,
-  term      text    NOT NULL,                         -- lexeme as produced by app.search_tsv
-  doc_freq  integer NOT NULL CHECK (doc_freq > 0),    -- number of the tenant's chunks containing the term
-  PRIMARY KEY (tenant_id, term)
-);

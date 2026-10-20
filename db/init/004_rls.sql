@@ -12,10 +12,6 @@ ALTER TABLE app.documents         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.documents         FORCE  ROW LEVEL SECURITY;
 ALTER TABLE app.chunks            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.chunks            FORCE  ROW LEVEL SECURITY;
-ALTER TABLE app.bm25_tenant_stats ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app.bm25_tenant_stats FORCE  ROW LEVEL SECURITY;
-ALTER TABLE app.bm25_term_stats   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app.bm25_term_stats   FORCE  ROW LEVEL SECURITY;
 
 -- A tenant can only see its own row. There is no INSERT/UPDATE/DELETE policy
 -- => those commands are denied by default.
@@ -34,23 +30,12 @@ CREATE POLICY tenant_isolation ON app.chunks
   USING      (tenant_id = app.current_tenant_id())
   WITH CHECK (tenant_id = app.current_tenant_id());
 
-CREATE POLICY tenant_isolation ON app.bm25_tenant_stats
-  USING      (tenant_id = app.current_tenant_id())
-  WITH CHECK (tenant_id = app.current_tenant_id());
-
-CREATE POLICY tenant_isolation ON app.bm25_term_stats
-  USING      (tenant_id = app.current_tenant_id())
-  WITH CHECK (tenant_id = app.current_tenant_id());
-
 -- -----------------------------------------------------------------------------
 -- app_user privileges
 -- -----------------------------------------------------------------------------
 GRANT USAGE ON SCHEMA app TO app_user;
 GRANT SELECT ON app.tenants TO app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON app.documents, app.chunks TO app_user;
--- BM25 statistics are read-only here; refreshing them is done by a dedicated
--- function (BM25 step).
-GRANT SELECT ON app.bm25_tenant_stats, app.bm25_term_stats TO app_user;
 
 RESET ROLE;
 ALTER ROLE app_user SET search_path = app, public;

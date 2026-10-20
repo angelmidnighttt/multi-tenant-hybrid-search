@@ -9,9 +9,9 @@ one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
 TypeScript executed directly by Node, without a build step.
 
 > **Status: work in progress.** The database schema, tenant isolation, the
-> Node.js foundation, JWT authentication, document ingestion, and background
-> embeddings are done and tested. BM25, vector, and hybrid search are next (see
-> [Roadmap](#roadmap)).
+> Node.js foundation, JWT authentication, document ingestion, background
+> embeddings, and BM25 keyword search are done and tested. Vector and hybrid
+> search are next (see [Roadmap](#roadmap)).
 
 ## Why this design
 
@@ -29,15 +29,19 @@ follows:
 | Forgetting to set the tenant | If no tenant is set, the policy compares against `NULL`, so queries return 0 rows and writes are rejected (fails closed). |
 | Foreign key checks bypass RLS | Foreign keys are composite `(tenant_id, id)`, so a row can never reference another tenant's row. |
 | Unique violations reveal other tenants' data | Every `UNIQUE` constraint includes `tenant_id`. |
-| Global BM25 statistics leak across tenants | IDF and average document length are stored **per tenant**. |
+| Global BM25 statistics leak across tenants | IDF and average document length are computed **per tenant**, at query time. |
 | A background worker must see every tenant's pending work | The embedding queue has no direct privileges for any role. It is reachable only through `SECURITY DEFINER` functions, and only `claim_embedding_jobs()` crosses tenants, returning ids only. Chunk content is still read and written through `withTenant()`. |
 
-There is also one finding that shapes the design:
+Two measured findings shape the design:
 
 - **Under RLS, PostgreSQL does not use the GIN full-text index**, because the
-  `@@` operator is not `LEAKPROOF`. BM25 search will therefore run through a
-  `SECURITY DEFINER` function that filters by tenant explicitly and returns only
-  `(id, score)`. Content is then fetched through RLS.
+  `@@` operator is not `LEAKPROOF`. With `FORCE ROW LEVEL SECURITY` this holds
+  even for the table owner. BM25 therefore runs in `app.bm25_search()`, a
+  `SECURITY DEFINER` function owned by `app_search`: a `NOLOGIN` role with
+  `BYPASSRLS` whose only privilege is `SELECT` on chunks, and which no other role
+  can become. The function filters by tenant explicitly and returns only
+  `(chunk_id, score)`. Titles and content are then read through RLS, so even a
+  bug in the function could not expose another tenant's text.
 - **HNSW + tenant filter is a post-filter**, so small tenants can get poor
   recall. This will be addressed in the vector search step.
 
@@ -172,6 +176,33 @@ The worker refuses to start if Ollama is unreachable or the model has not been
 pulled. On `Ctrl+C` it finishes the current round and exits; press it twice to
 quit immediately.
 
+### Search
+
+```bash
+curl -G http://localhost:3000/search -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "q=học phí" --data-urlencode "mode=bm25" --data-urlencode "limit=3"
+# 200 {"mode":"bm25","results":[
+#   {"chunk_id":"1","document_id":"1","title":"Quy chế học phí","content":"...","score":2.347}, ...]}
+```
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `q` | (required) | Up to 500 characters. Diacritics are optional: `hoc phi` matches `học phí`. |
+| `mode` | `bm25` | `vector` and `hybrid` come in the next steps |
+| `limit` | `10` | 1 to 50 |
+
+BM25 ranking works like Lucene's: `k1 = 1.2`, `b = 0.75`, and
+`idf = ln(1 + (N − df + 0.5) / (df + 0.5))`. A chunk matching **any** query word
+is a candidate. Chunks that match more words, rarer words, or the same word more
+often rank higher. `N`, the average chunk length, and each `df` are computed at
+query time from **the caller's tenant only**, so they are always exact and no
+other tenant's data affects the ranking.
+
+BM25 matches words, not meaning, and Vietnamese is matched syllable by syllable.
+"Làm sao để không phải đóng tiền học?" finds the tuition document only through
+the syllable "học", which also gives unrelated documents a score. Vector search
+and the hybrid ranking (next steps) address this.
+
 ### See the isolation yourself
 
 ```bash
@@ -218,7 +249,8 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 
 | File | What it proves |
 |---|---|
-| `test/database/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or write BM25 stats. Vietnamese unaccented search works. |
+| `test/database/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or become the `app_search` role. Vietnamese unaccented search works. |
+| `test/search/search.test.ts` | BM25 scores equal an independent reference implementation. The same text scores differently in two tenants because statistics are per tenant. Diacritics are ignored, and OR semantics and the limit work. The RLS-bypassing function never returns another tenant's chunk ids, checked on its raw output, and returns nothing without a tenant. `GET /search` returns only the token's tenant and validates its parameters. |
 | `test/documents/chunker.test.ts` | Chunking (no database): never exceeds the size limit, never cuts a sentence, covers all text in order, overlaps consecutive chunks, keeps paragraph breaks, and normalizes NFD to NFC. |
 | `test/documents/documents.test.ts` | `POST /documents`. Documents and chunks are stored under the token's tenant. Re-sending an `external_id` replaces the document. The same `external_id` in two tenants gives two separate documents. A `tenant_id` in the body is rejected. Invalid bodies write nothing. |
 | `test/auth/auth.test.ts` | The HTTP API end to end. A token for tenant A only ever returns tenant A. Every kind of bad token is rejected before any data is read: missing, expired, wrong secret, `alg: none`, HS512, tampered payload, wrong issuer or audience, missing or non-UUID `tenant_id`. |
@@ -234,10 +266,11 @@ pull request. CI does not need Ollama: tests use a deterministic fake model.
 ```
 db/init/                 SQL run once when the database volume is created
   001_extensions.sql     pgvector, unaccent
-  002_roles.sql          app_owner (owns objects), app_user (used by the app)
+  002_roles.sql          app_owner (owns objects), app_user (used by the app), app_search
   003_schema.sql         tables, Vietnamese full-text config, indexes
   004_rls.sql            RLS policies and grants
   005_embedding_jobs.sql embedding job queue + its SECURITY DEFINER functions
+  006_bm25_search.sql    app.bm25_search(): BM25 with per-tenant statistics
 src/
   main.ts                       API entry point: config → db → auth → HTTP server
   worker.ts                     embedding worker entry point (separate process)
@@ -263,6 +296,10 @@ src/
     embedding.provider.ts       EmbeddingProvider interface (1024 dimensions)
     ollama.provider.ts          Ollama /api/embed client
     embeddings.service.ts       claim → embed in batches → write → finish/fail
+  search/
+    search.handler.ts           GET /search: HTTP in/out
+    search.validation.ts        query string validation (q, mode, limit)
+    search.service.ts           calls app.bm25_search(), reads titles/content through RLS
 scripts/
   token.ts                      dev helper: mint a JWT for a tenant
 test/                           mirrors src/
@@ -275,6 +312,7 @@ test/                           mirrors src/
   documents/chunker.test.ts     chunking (no database)
   documents/documents.test.ts   ingestion
   embeddings/*.test.ts          job queue, worker, Ollama client
+  search/search.test.ts         BM25 scoring, isolation, GET /search
 .github/workflows/ci.yml        type check + tests on Node 22 and 24
 docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1, Ollama 0.35.1 (CPU)
 ```
@@ -291,8 +329,6 @@ checks input. `lib/` holds infrastructure that knows nothing about features.
 | `tenants` | One row per customer. A tenant can only read its own row. |
 | `documents` | Source documents (title, source URI, metadata). |
 | `chunks` | The unit of search. Each chunk has its text, a generated `tsv` for BM25, `token_count` (document length), and a `vector(1024)` embedding. |
-| `bm25_tenant_stats` | Per-tenant chunk count and total tokens (for average document length). |
-| `bm25_term_stats` | Per-tenant document frequency of each term (for IDF). |
 | `embedding_jobs` | One pending embedding job per document: attempts, backoff, lease, last error. No direct access; see [Embeddings](#embeddings). |
 
 Full-text search uses a custom `app.vn_unaccent` configuration (whitespace
@@ -354,7 +390,7 @@ and the Ollama settings, but not `JWT_SECRET`.
 - [x] Authentication: tenant taken from a verified JWT claim (`GET /me`)
 - [x] Ingestion: `POST /documents`, sentence-aware chunking, idempotent re-ingest by `external_id`
 - [x] Embeddings: background worker with Ollama `bge-m3`, job queue with retries
-- [ ] BM25 search with per-tenant statistics
+- [x] BM25 search with per-tenant statistics (`GET /search?mode=bm25`)
 - [ ] Vector search with good recall for small tenants
 - [ ] Hybrid search with Reciprocal Rank Fusion (RRF)
 - [ ] Seed data and quality and latency benchmarks

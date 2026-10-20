@@ -175,9 +175,9 @@ describe('RLS: privileges', () => {
     );
   });
 
-  it('app_user cannot write BM25 statistics', async () => {
+  it('app_user cannot become app_search, the role that bypasses RLS', async () => {
     await assert.rejects(
-      inTenant(TENANT_A, () => app.query("INSERT INTO bm25_term_stats (term, doc_freq) VALUES ('x', 1)")),
+      inTenant(TENANT_A, () => app.query('SET LOCAL ROLE app_search')),
       { code: INSUFFICIENT_PRIVILEGE },
     );
   });
