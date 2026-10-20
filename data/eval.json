@@ -1,0 +1,42 @@
+{
+  "description": "Questions for npm run eval. 'expected' lists the external_id(s) of the relevant document(s) in that tenant. Categories: keyword (uses the document's own words), paraphrase (same meaning, different words), no-diacritics (typed without Vietnamese accents).",
+  "queries": [
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "học phí tín chỉ", "expected": ["hoc-phi"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "giờ mở cửa thư viện", "expected": ["thu-vien"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "phúc khảo bài thi", "expected": ["thi-cu"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "chứng chỉ tiếng Anh xét tốt nghiệp", "expected": ["tot-nghiep"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "vé tháng gửi xe máy", "expected": ["gui-xe"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "keyword", "query": "cấp lại thẻ sinh viên", "expected": ["the-sinh-vien"] },
+
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Làm sao để không phải đóng tiền học?", "expected": ["hoc-phi"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Tôi muốn thuê chỗ ở trong trường", "expected": ["ky-tuc-xa"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Điểm cao thì có được nhận tiền thưởng không?", "expected": ["hoc-bong"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Mượn sách quá hạn có bị phạt không?", "expected": ["thu-vien"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Tôi bị ốm nặng, muốn tạm dừng việc học một thời gian", "expected": ["bao-luu"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Lỡ đăng ký nhầm môn thì hủy thế nào?", "expected": ["dang-ky-hoc-phan"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Bị ốm đúng ngày thi thì phải làm gì?", "expected": ["thi-cu"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Đi khám bệnh ở đâu trong trường?", "expected": ["bao-hiem-y-te"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "paraphrase", "query": "Năm cuối phải đi làm ở công ty bao lâu?", "expected": ["thuc-tap"] },
+
+    { "tenant": "dai-hoc-huong-duong", "category": "no-diacritics", "query": "dang ky ky tuc xa", "expected": ["ky-tuc-xa"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "no-diacritics", "query": "hoc bong khuyen khich hoc tap", "expected": ["hoc-bong"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "no-diacritics", "query": "bao luu ket qua hoc tap", "expected": ["bao-luu"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "no-diacritics", "query": "dieu kien tot nghiep", "expected": ["tot-nghiep"] },
+    { "tenant": "dai-hoc-huong-duong", "category": "no-diacritics", "query": "mat the sinh vien", "expected": ["the-sinh-vien"] },
+
+    { "tenant": "cong-ty-may-xanh", "category": "keyword", "query": "nghỉ phép năm", "expected": ["nghi-phep"] },
+    { "tenant": "cong-ty-may-xanh", "category": "keyword", "query": "công tác phí khách sạn", "expected": ["cong-tac-phi"] },
+    { "tenant": "cong-ty-may-xanh", "category": "keyword", "query": "thưởng tháng 13", "expected": ["luong-thuong"] },
+    { "tenant": "cong-ty-may-xanh", "category": "keyword", "query": "bảo hiểm sức khỏe", "expected": ["bao-hiem-suc-khoe"] },
+
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Tôi muốn làm ở nhà vài hôm mỗi tuần", "expected": ["lam-viec-tu-xa"] },
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Công ty có trả tiền cho tôi đi học thêm không?", "expected": ["dao-tao"] },
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Khi nào thì nhận lương?", "expected": ["luong-thuong"] },
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Laptop bị mất thì phải làm gì?", "expected": ["thiet-bi"] },
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Muốn thôi việc thì cần báo trước bao lâu?", "expected": ["nghi-viec"] },
+    { "tenant": "cong-ty-may-xanh", "category": "paraphrase", "query": "Con tôi có được dùng bảo hiểm của công ty không?", "expected": ["bao-hiem-suc-khoe"] },
+
+    { "tenant": "cong-ty-may-xanh", "category": "no-diacritics", "query": "lam viec tu xa", "expected": ["lam-viec-tu-xa"] },
+    { "tenant": "cong-ty-may-xanh", "category": "no-diacritics", "query": "ho tro hoc phi", "expected": ["dao-tao"] }
+  ]
+}

@@ -8,10 +8,10 @@ Multi-tenant search on PostgreSQL: **Row-Level Security** for tenant isolation,
 one hybrid ranking. Built with plain Node.js (`node:http`, no framework) and
 TypeScript executed directly by Node, without a build step.
 
-> **Status: work in progress.** The database schema, tenant isolation, the
-> Node.js foundation, JWT authentication, document ingestion, background
-> embeddings, BM25 keyword search, and vector search are done and tested.
-> Hybrid ranking is next (see [Roadmap](#roadmap)).
+> **Status: complete.** Every item on the [Roadmap](#roadmap) is implemented
+> and tested (106 automated tests, CI on Node 22 and 24). Quality and latency are
+> measured on Vietnamese demo data in [Evaluation](#evaluation), and known
+> limits are listed in [Limitations and next steps](#limitations-and-next-steps).
 
 ## Why this design
 
@@ -74,6 +74,7 @@ cp app.env.example app.env
 npm install
 npm run up           # PostgreSQL 17 + pgvector (applies db/init/*.sql) and Ollama
 npm run models:pull  # one time: downloads the bge-m3 embedding model (~1.2 GB)
+npm run seed         # optional: two demo tenants with Vietnamese documents, embedded
 
 # 4. Run the API and the embedding worker (two terminals)
 npm run dev          # API with --watch
@@ -183,21 +184,39 @@ quit immediately.
 
 ```bash
 curl -G http://localhost:3000/search -H "Authorization: Bearer $TOKEN" \
-  --data-urlencode "q=học phí" --data-urlencode "mode=bm25" --data-urlencode "limit=3"
-# 200 {"mode":"bm25","results":[
-#   {"chunk_id":"1","document_id":"1","title":"Quy chế học phí","content":"...","score":2.347}, ...]}
-
-curl -G http://localhost:3000/search -H "Authorization: Bearer $TOKEN" \
-  --data-urlencode "q=Tôi muốn thuê chỗ ở trong trường" --data-urlencode "mode=vector"
-# 200 {"mode":"vector","strategy":"exact","results":[
-#   {"chunk_id":"2","document_id":"2","title":"Đăng ký ký túc xá","content":"...","score":0.626}, ...]}
+  --data-urlencode "q=Tôi muốn thuê chỗ ở trong trường" --data-urlencode "limit=3"
+# 200 {"mode":"hybrid","strategy":"exact","results":[
+#   {"chunk_id":"3","document_id":"3","title":"Đăng ký ở ký túc xá","content":"...",
+#    "score":0.0323,"bm25_rank":3,"vector_rank":1}, ...]}
 ```
 
 | Parameter | Default | Notes |
 |---|---|---|
 | `q` | (required) | Up to 500 characters. Diacritics are optional: `hoc phi` matches `học phí`. |
-| `mode` | `bm25` | `bm25` (keywords) or `vector` (meaning). `hybrid` comes next. |
+| `mode` | `hybrid` | `hybrid` (both, fused), `bm25` (keywords), or `vector` (meaning) |
 | `limit` | `10` | 1 to 50 |
+
+Every mode returns `chunk_id`, `document_id`, `title`, `content`, and `score`,
+best first. A missing or invalid token gives `401`, and a token whose tenant no
+longer exists gives `403`. If the query cannot be embedded, `vector` and
+`hybrid` give `503 embedding_unavailable` while `bm25` keeps working.
+
+#### `mode=hybrid` (default)
+
+Both rankings below are computed in one transaction, 50 deep each, and fused
+with **Reciprocal Rank Fusion**:
+
+```
+score(chunk) = 1 / (60 + bm25_rank) + 1 / (60 + vector_rank)
+```
+
+RRF only uses ranks, so BM25 scores (unbounded) and cosine similarities (0–1)
+never need to be normalized against each other. A chunk found by both rankings
+collects two terms and rises above chunks found by one. Each result reports its
+`bm25_rank` and `vector_rank` (`null` when that ranking did not return it), so
+every position can be explained. Ties go to the better vector rank, then the
+better BM25 rank. A chunk whose embedding is still pending can be found through
+BM25 alone.
 
 #### `mode=bm25`
 
@@ -264,6 +283,63 @@ const docs = await db.withTenant(tenantId, async (tx) => {
 error. Any attempt to use `tx` after it returns is rejected, because by then the
 connection may be serving another tenant.
 
+## Evaluation
+
+```bash
+npm run seed   # data/demo.json: 2 fictional tenants, 20 Vietnamese documents
+npm run eval   # data/eval.json: 32 questions with known answers, all three modes
+```
+
+The demo tenants are a university (12 documents: tuition, scholarships, dorms,
+library, exams…) and a software company (8 documents: leave, remote work,
+salary, training…). Their topics overlap on purpose ("học phí", "nghỉ", "bảo
+hiểm"), so a leak would show up. The questions come in three kinds:
+
+- **keyword**: uses the document's own words, e.g. "phúc khảo bài thi"
+- **paraphrase**: same meaning, different words, e.g. "Làm sao để không phải đóng tiền học?"
+- **no-diacritics**: typed without accents, e.g. "dang ky ky tuc xa"
+
+Results are reduced to distinct documents. A question is answered at k when its
+expected document is among the top k. Latency is per search, measured in the
+service layer: it excludes about 1 ms of HTTP and JWT overhead and includes
+embedding the query with bge-m3 on CPU.
+
+Measured on a laptop CPU (12 cores, no GPU):
+
+| Mode | Hit@1 | Hit@5 | MRR@10 | p50 latency | p95 latency | Cross-tenant results |
+|---|---|---|---|---|---|---|
+| bm25 | 78% | 97% | 0.86 | 7 ms | 12 ms | 0 |
+| vector | 88% | 97% | 0.92 | 48 ms | 101 ms | 0 |
+| hybrid | 84% | **100%** | 0.91 | 49 ms | 62 ms | 0 |
+
+Hit@1 by kind of question:
+
+| Kind | Questions | bm25 | vector | hybrid |
+|---|---|---|---|---|
+| keyword | 10 | 100% | 100% | 100% |
+| paraphrase | 15 | 60% | 100% | 87% |
+| no-diacritics | 7 | 86% | 43% | 57% |
+
+What this shows:
+
+- **The two rankings fail differently.** BM25 misses paraphrases (60%) because
+  it matches syllables, not meaning. bge-m3 misses accent-free queries (43%)
+  because "hoc phi" is not the same text as "học phí" to the model. BM25 handles
+  those (86%) thanks to `unaccent`.
+- **Hybrid is the most robust.** It is the only mode that put the right document
+  in the top 5 for every question, and its first results are close to the best
+  single mode in each kind. It is not the best everywhere: on paraphrases, BM25
+  noise sometimes pushes a wrong document above the right one (87% vs 100%).
+- **No result ever came from another tenant**, in any mode.
+- With 12 and 8 documents per tenant, one question moves a percentage by 3–15
+  points. Treat these as a sanity check of the pipeline, not as a benchmark of
+  bge-m3 or BM25.
+
+Scale was measured separately on 57,000 synthetic 1024-dimension chunks. Exact
+vector search took 1.5 ms for 50 chunks and 144 ms for 50,000. HNSW took about
+1 ms with recall 0.98. BM25 over a 20,000-chunk tenant took about 75 ms when
+the query word appears in every chunk.
+
 ## Testing
 
 ```bash
@@ -279,6 +355,7 @@ same image and `db/init/` scripts as `docker-compose.yml`, with two tenants
 |---|---|
 | `test/database/rls.test.ts` | The database policies themselves, queried directly as `app_user`. Without a tenant nothing is visible. A tenant sees and changes only its own rows. Cross-tenant inserts, moves, and foreign-key links are rejected. `app_user` cannot create tenants, disable RLS, or become the `app_search` role. Vietnamese unaccented search works. |
 | `test/search/search.test.ts` | BM25 scores equal an independent reference implementation. The same text scores differently in two tenants because statistics are per tenant. Diacritics are ignored, and OR semantics and the limit work. The RLS-bypassing function never returns another tenant's chunk ids, checked on its raw output, and returns nothing without a tenant. `GET /search` returns only the token's tenant and validates its parameters. |
+| `test/search/hybrid.test.ts` | RRF math and tie-breaks. The default `hybrid` mode equals RRF applied to the reference BM25 and brute-force vector rankings, and its `bm25_rank` / `vector_rank` agree with the other two modes. A pending chunk is still found through BM25. A tenant is never crowded out by another tenant's chunks. An unavailable model gives `503`, and the HNSW strategy gives the same results. |
 | `test/search/vector.test.ts` | `mode=vector` matches an exact brute-force ranking, and so do both strategies (`exact` and a forced `hnsw`). A tenant never gets another tenant's chunk, even one with an identical vector, and is never crowded out by another tenant's closer chunks. Pending chunks are excluded. An unavailable model or a wrong vector size gives `503`. |
 | `test/documents/chunker.test.ts` | Chunking (no database): never exceeds the size limit, never cuts a sentence, covers all text in order, overlaps consecutive chunks, keeps paragraph breaks, and normalizes NFD to NFC. |
 | `test/documents/documents.test.ts` | `POST /documents`. Documents and chunks are stored under the token's tenant. Re-sending an `external_id` replaces the document. The same `external_id` in two tenants gives two separate documents. A `tenant_id` in the body is rejected. Invalid bodies write nothing. |
@@ -328,13 +405,21 @@ src/
   search/
     search.handler.ts           GET /search: HTTP in/out
     search.validation.ts        query string validation (q, mode, limit)
-    search.service.ts           bm25 via app.bm25_search(); vector: exact or HNSW, under RLS
+    search.service.ts           bm25, vector (exact or HNSW), hybrid; content read through RLS
+    rrf.ts                      Reciprocal Rank Fusion
 scripts/
   token.ts                      dev helper: mint a JWT for a tenant
+  seed.ts                       loads data/demo.json (tenants, documents, embeddings)
+  eval.ts                       runs data/eval.json in every mode: quality + latency
+  admin.ts                      superuser helpers for the scripts (never used by the app)
+data/
+  demo.json                     2 fictional tenants, 20 Vietnamese documents
+  eval.json                     32 questions with their expected documents
 test/                           mirrors src/
   helpers/db.ts                 starts a throwaway database and seeds tenants A and B
   helpers/server.ts             starts the real app on a random port, signs test tokens
   helpers/fake-embeddings.ts    deterministic fake embedding model
+  helpers/reference.ts          independent BM25, cosine, and RRF reference implementations
   database/rls.test.ts          database-level isolation
   lib/with-tenant.test.ts       withTenant() isolation
   auth/auth.test.ts             HTTP + JWT
@@ -343,6 +428,7 @@ test/                           mirrors src/
   embeddings/*.test.ts          job queue, worker, Ollama client
   search/search.test.ts         BM25 scoring, isolation, GET /search
   search/vector.test.ts         vector search: ranking, strategies, isolation, 503
+  search/hybrid.test.ts         RRF, hybrid ranking, pending chunks, isolation, 503
 .github/workflows/ci.yml        type check + tests on Node 22 and 24
 docker-compose.yml              PostgreSQL 17 + pgvector 0.8.1, Ollama 0.35.1 (CPU)
 ```
@@ -378,6 +464,12 @@ tokenization + diacritic removal), so `hoc sinh` matches `học sinh`.
 | `npm run db:up` | Start only the database |
 | `npm run db:reset` | **Delete all database data** and recreate it from `db/init/`. Downloaded models are kept. |
 | `npm run models:pull` | Download the `bge-m3` model into the Ollama container (one time) |
+| `npm run seed` | Load the demo tenants and documents and embed them. Safe to re-run. |
+| `npm run eval` | Measure quality and latency of every mode on the demo data |
+
+`seed` and `eval` read `.env` as well as `app.env`. They use the superuser only
+to create tenants and to look up ids across tenants. Every search they run goes
+through `app_user`, like the API.
 
 Scripts in `db/init/` run only when the database volume is empty. After you
 change them, run `npm run db:reset`.
@@ -423,8 +515,34 @@ settings, but not `JWT_SECRET`.
 - [x] Embeddings: background worker with Ollama `bge-m3`, job queue with retries
 - [x] BM25 search with per-tenant statistics (`GET /search?mode=bm25`)
 - [x] Vector search with good recall for small tenants (`GET /search?mode=vector`)
-- [ ] Hybrid search with Reciprocal Rank Fusion (RRF)
-- [ ] Seed data and quality and latency benchmarks
+- [x] Hybrid search with Reciprocal Rank Fusion (`GET /search`, the default mode)
+- [x] Seed data and quality and latency evaluation (`npm run seed`, `npm run eval`)
+
+## Limitations and next steps
+
+These are known limits of the current design, roughly by impact:
+
+- **Vietnamese word segmentation.** BM25 works on syllables, so "học sinh" also
+  matches "sinh viên". The `search_text` column is already there for segmented
+  text (e.g. from pyvi or underthesea), but nothing fills it yet.
+- **Accent-free queries in vector search.** bge-m3 scored 43% Hit@1 on them.
+  Restoring diacritics or adding an accent-free variant of each chunk would help.
+- **BM25 statistics are computed per query.** This is exact and simple, but
+  costs a scan of the tenant's chunks. Beyond roughly 100k chunks per tenant,
+  cache N, avgdl and df per tenant.
+- **Very large tenants.** Above 20k chunks, vector search relies on one shared
+  HNSW index with iterative scans. A tenant with millions of chunks would be
+  better served by its own partition (`PARTITION BY LIST (tenant_id)`): the
+  primary key already starts with `tenant_id` for that reason.
+- **The worker connects as `app_user`.** A separate role that alone can claim
+  embedding jobs would stop the API role from listing other tenants' job ids.
+  This was a deliberate simplicity trade-off, and only the grants would change.
+- **Schema changes need `db:reset`.** A migration tool should replace
+  `db/init/` before real data is stored.
+- **Missing API surface:** reading, listing, and deleting documents, highlighted
+  snippets (`ts_headline`), and re-embedding when `EMBEDDING_MODEL` changes.
+- **CPU-only Ollama.** Query embedding dominates search latency (~45 ms). A GPU
+  (an override compose file) or a smaller model would cut it.
 
 ## License
 

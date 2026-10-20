@@ -1,0 +1,116 @@
+{
+  "tenants": [
+    {
+      "slug": "dai-hoc-huong-duong",
+      "name": "Trường Đại học Hướng Dương (fictional)",
+      "documents": [
+        {
+          "external_id": "hoc-phi",
+          "title": "Quy định học phí và miễn giảm học phí",
+          "content": "Học phí năm học 2026–2027 được tính theo số tín chỉ đăng ký, mức 450.000 đồng mỗi tín chỉ. Sinh viên nộp học phí qua ngân hàng hoặc cổng thanh toán trực tuyến trước tuần thứ tư của học kỳ.\n\nSinh viên là con thương binh, liệt sĩ được miễn 100% học phí. Sinh viên thuộc hộ nghèo được giảm 50% học phí khi nộp giấy xác nhận của địa phương. Sinh viên chưa hoàn thành học phí sẽ bị khóa chức năng đăng ký học phần của học kỳ sau."
+        },
+        {
+          "external_id": "hoc-bong",
+          "title": "Học bổng khuyến khích học tập",
+          "content": "Mỗi học kỳ, nhà trường xét học bổng khuyến khích học tập cho sinh viên có điểm trung bình từ 3,2 trở lên và điểm rèn luyện từ 80 điểm. Học bổng loại xuất sắc bằng 120% học phí, loại giỏi bằng 100% và loại khá bằng 80% học phí của học kỳ.\n\nDanh sách được công bố trên cổng thông tin sinh viên vào tuần thứ sáu. Tiền học bổng được chuyển vào tài khoản ngân hàng của sinh viên."
+        },
+        {
+          "external_id": "ky-tuc-xa",
+          "title": "Đăng ký ở ký túc xá",
+          "content": "Sinh viên có nhu cầu ở ký túc xá đăng ký trực tuyến trên cổng sinh viên trước ngày 15 tháng 8. Tân sinh viên có hộ khẩu ở tỉnh xa và sinh viên có hoàn cảnh khó khăn được ưu tiên xếp phòng.\n\nMỗi phòng có 6 giường, giá 350.000 đồng mỗi người mỗi tháng. Tiền điện nước tính theo đồng hồ riêng của từng phòng. Ký túc xá đóng cổng lúc 23 giờ."
+        },
+        {
+          "external_id": "thu-vien",
+          "title": "Nội quy thư viện",
+          "content": "Thư viện mở cửa từ 7 giờ đến 21 giờ, từ thứ hai đến thứ bảy; chủ nhật và ngày lễ nghỉ. Bạn đọc dùng thẻ sinh viên để vào thư viện và được mượn tối đa 5 cuốn sách trong 14 ngày.\n\nCó thể gia hạn trực tuyến một lần thêm 7 ngày. Trả sách trễ hạn bị phạt 2.000 đồng mỗi ngày cho mỗi cuốn."
+        },
+        {
+          "external_id": "dang-ky-hoc-phan",
+          "title": "Đăng ký và rút học phần",
+          "content": "Sinh viên đăng ký học phần trên cổng sinh viên theo lịch của phòng đào tạo, tối thiểu 14 và tối đa 25 tín chỉ mỗi học kỳ chính.\n\nTrong hai tuần đầu của học kỳ, sinh viên được rút học phần đã đăng ký mà không phải đóng học phí cho học phần đó. Sau thời hạn này, học phần rút bị ghi điểm W và vẫn phải đóng học phí."
+        },
+        {
+          "external_id": "thi-cu",
+          "title": "Quy chế thi kết thúc học phần",
+          "content": "Sinh viên phải có mặt tại phòng thi trước giờ thi 15 phút và mang theo thẻ sinh viên. Sinh viên vắng thi không có lý do chính đáng nhận điểm 0. Trường hợp ốm đau phải nộp giấy xác nhận của cơ sở y tế trong vòng 3 ngày để được thi bù.\n\nSinh viên được đề nghị phúc khảo bài thi trong 7 ngày kể từ ngày công bố điểm, lệ phí 30.000 đồng mỗi bài."
+        },
+        {
+          "external_id": "tot-nghiep",
+          "title": "Điều kiện xét tốt nghiệp",
+          "content": "Sinh viên được xét tốt nghiệp khi tích lũy đủ 130 tín chỉ của chương trình đào tạo và có điểm trung bình tích lũy từ 2,0 trở lên.\n\nSinh viên phải có chứng chỉ tiếng Anh tương đương bậc 3 (B1) và chứng chỉ giáo dục quốc phòng – an ninh. Hội đồng xét tốt nghiệp họp vào tháng 6 và tháng 12 hằng năm."
+        },
+        {
+          "external_id": "bao-luu",
+          "title": "Bảo lưu kết quả học tập và nghỉ học tạm thời",
+          "content": "Sinh viên được nghỉ học tạm thời và bảo lưu kết quả học tập khi đi nghĩa vụ quân sự, bị ốm hoặc tai nạn phải điều trị dài ngày, hoặc vì lý do cá nhân khác.\n\nThời gian nghỉ tạm thời tối đa là 2 học kỳ, trừ trường hợp đi nghĩa vụ quân sự. Sinh viên nộp đơn kèm giấy tờ minh chứng tại phòng đào tạo trước khi học kỳ bắt đầu."
+        },
+        {
+          "external_id": "the-sinh-vien",
+          "title": "Cấp lại thẻ sinh viên",
+          "content": "Thẻ sinh viên dùng để vào thư viện, gửi xe và dự thi. Khi bị mất hoặc hỏng thẻ, sinh viên đến phòng công tác sinh viên để làm thủ tục cấp lại, lệ phí 50.000 đồng.\n\nThẻ mới được trả sau 3 ngày làm việc. Trong thời gian chờ, sinh viên được cấp giấy xác nhận tạm thời."
+        },
+        {
+          "external_id": "gui-xe",
+          "title": "Bãi giữ xe",
+          "content": "Bãi giữ xe của trường mở cửa từ 6 giờ 30 đến 22 giờ. Vé tháng xe máy giá 60.000 đồng, xe đạp được gửi miễn phí.\n\nSinh viên làm mất vé xe phải xuất trình giấy đăng ký xe và thẻ sinh viên để nhận lại xe."
+        },
+        {
+          "external_id": "bao-hiem-y-te",
+          "title": "Bảo hiểm y tế sinh viên",
+          "content": "Bảo hiểm y tế là bắt buộc đối với tất cả sinh viên, mức đóng năm 2026 là 1.263.600 đồng cho 12 tháng.\n\nSinh viên được khám chữa bệnh ban đầu miễn phí tại trạm y tế của trường và được chuyển tuyến lên bệnh viện khi cần."
+        },
+        {
+          "external_id": "thuc-tap",
+          "title": "Thực tập tốt nghiệp",
+          "content": "Sinh viên năm cuối thực hiện thực tập tốt nghiệp trong 8 tuần tại doanh nghiệp. Sinh viên có thể tự liên hệ nơi thực tập hoặc đăng ký theo danh sách doanh nghiệp do khoa giới thiệu.\n\nKết thúc thực tập, sinh viên nộp báo cáo có xác nhận của doanh nghiệp cho giảng viên hướng dẫn."
+        }
+      ]
+    },
+    {
+      "slug": "cong-ty-may-xanh",
+      "name": "Công ty Phần mềm Mây Xanh (fictional)",
+      "documents": [
+        {
+          "external_id": "nghi-phep",
+          "title": "Chính sách nghỉ phép năm",
+          "content": "Nhân viên chính thức có 12 ngày phép năm, cứ 5 năm làm việc được cộng thêm 1 ngày. Đơn nghỉ phép phải được đăng ký trên hệ thống nhân sự ít nhất 3 ngày làm việc trước ngày nghỉ và được quản lý trực tiếp phê duyệt.\n\nSố ngày phép chưa dùng hết được chuyển sang năm sau và phải sử dụng trước ngày 31 tháng 3."
+        },
+        {
+          "external_id": "lam-viec-tu-xa",
+          "title": "Làm việc từ xa",
+          "content": "Nhân viên được làm việc từ xa tối đa 2 ngày mỗi tuần sau khi quản lý trực tiếp đồng ý. Trong những ngày này, nhân viên phải trực tuyến trên công cụ chat của công ty trong khung giờ 9 giờ đến 16 giờ và tham gia đầy đủ các cuộc họp.\n\nNhân viên thử việc chưa được áp dụng chính sách này."
+        },
+        {
+          "external_id": "luong-thuong",
+          "title": "Lương và thưởng",
+          "content": "Lương được chuyển khoản vào ngày 5 hằng tháng; nếu trùng ngày nghỉ thì chuyển vào ngày làm việc liền trước.\n\nCông ty chi thưởng tháng lương thứ 13 vào dịp Tết và thưởng hiệu suất mỗi quý dựa trên kết quả đánh giá OKR."
+        },
+        {
+          "external_id": "dao-tao",
+          "title": "Hỗ trợ chi phí đào tạo",
+          "content": "Công ty hỗ trợ 100% học phí các khóa học chuyên môn và chứng chỉ quốc tế liên quan đến công việc, tối đa 20 triệu đồng mỗi năm cho mỗi nhân viên.\n\nNhân viên được hỗ trợ phải cam kết tiếp tục làm việc ít nhất 12 tháng sau khi hoàn thành khóa học; nếu nghỉ việc sớm phải hoàn trả theo tỷ lệ."
+        },
+        {
+          "external_id": "bao-hiem-suc-khoe",
+          "title": "Bảo hiểm sức khỏe",
+          "content": "Ngoài bảo hiểm xã hội bắt buộc, công ty mua gói bảo hiểm sức khỏe cao cấp cho nhân viên chính thức, bao gồm khám ngoại trú, nội trú và nha khoa.\n\nVợ, chồng và con dưới 18 tuổi của nhân viên được tham gia gói bảo hiểm với mức phí ưu đãi. Nhân viên được khám sức khỏe định kỳ mỗi năm một lần."
+        },
+        {
+          "external_id": "cong-tac-phi",
+          "title": "Công tác phí",
+          "content": "Khi đi công tác, nhân viên được thanh toán vé máy bay hạng phổ thông, khách sạn tối đa 1,2 triệu đồng mỗi đêm và phụ cấp ăn uống 300.000 đồng mỗi ngày.\n\nHóa đơn và chứng từ phải được nộp cho phòng kế toán trong vòng 7 ngày sau chuyến công tác."
+        },
+        {
+          "external_id": "thiet-bi",
+          "title": "Cấp phát và sử dụng thiết bị",
+          "content": "Mỗi nhân viên được cấp một máy tính xách tay khi nhận việc và được đổi máy mới sau 3 năm sử dụng.\n\nThiết bị bị hỏng được bộ phận IT sửa chữa hoặc thay thế. Trường hợp bị mất phải báo cho bộ phận IT trong vòng 24 giờ để khóa dữ liệu từ xa."
+        },
+        {
+          "external_id": "nghi-viec",
+          "title": "Thủ tục nghỉ việc",
+          "content": "Nhân viên muốn nghỉ việc phải gửi đơn trước 30 ngày; vị trí quản lý phải báo trước 45 ngày.\n\nTrước ngày làm việc cuối cùng, nhân viên bàn giao công việc, hoàn trả máy tính và thẻ ra vào cho công ty. Lương và các khoản còn lại được thanh toán trong vòng 7 ngày làm việc."
+        }
+      ]
+    }
+  ]
+}

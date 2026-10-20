@@ -14,6 +14,8 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "token": "node --env-file-if-exists=app.env scripts/token.ts",
     "worker": "node --env-file-if-exists=app.env src/worker.ts",
+    "seed": "node --env-file-if-exists=.env --env-file-if-exists=app.env scripts/seed.ts",
+    "eval": "node --env-file-if-exists=.env --env-file-if-exists=app.env scripts/eval.ts",
     "up": "docker compose up -d --wait",
     "db:up": "docker compose up -d --wait db",
     "db:reset": "docker compose rm -sfv db && docker volume rm hybrid-search_pgdata && docker compose up -d --wait db",
